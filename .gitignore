@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tgz
 coverage/
+examples/checkout/orders.sqlite*
+test-results/

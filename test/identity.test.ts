@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMutationGuard, MutationGuardError, type ExecuteContext } from "../src/index.js";
+import { createOrynth, OrynthError, type ExecuteContext } from "../src/index.js";
 import { generateId } from "../src/id.js";
 import { connectionReset, HttpError } from "./helpers.js";
 
@@ -9,7 +9,7 @@ describe("operation identity", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("gives every new operation its own ID and idempotency key", () => {
-    const guard = createMutationGuard();
+    const guard = createOrynth();
     const createOrder = guard.define({ name: "create-order", execute: async () => "ok" });
 
     const input = { productId: "123", quantity: 2 };
@@ -26,7 +26,7 @@ describe("operation identity", () => {
 
   it("keeps the ID, idempotency key and input across automatic and manual retries", async () => {
     const calls: ExecuteContext<{ n: number }>[] = [];
-    const guard = createMutationGuard();
+    const guard = createOrynth();
     const def = guard.define({
       name: "op",
       retry: { attempts: 2, delay: 0 },
@@ -52,7 +52,7 @@ describe("operation identity", () => {
 
   it("accepts a custom ID and idempotency key", async () => {
     const execute = vi.fn(async ({ idempotencyKey }: ExecuteContext<unknown>) => idempotencyKey);
-    const def = createMutationGuard().define({ name: "op", execute });
+    const def = createOrynth().define({ name: "op", execute });
 
     const op = def.create(undefined, { id: "checkout-42", idempotencyKey: "cart-42-v1" });
 
@@ -61,13 +61,13 @@ describe("operation identity", () => {
   });
 
   it("rejects invalid custom identifiers", () => {
-    const def = createMutationGuard().define({ name: "op", execute: async () => 1 });
+    const def = createOrynth().define({ name: "op", execute: async () => 1 });
     expect(() => def.create(undefined, { id: "" })).toThrow(TypeError);
     expect(() => def.create(undefined, { idempotencyKey: 42 as never })).toThrow(TypeError);
   });
 
   it("refuses a second live operation with the same ID", async () => {
-    const def = createMutationGuard().define({
+    const def = createOrynth().define({
       name: "op",
       execute: async () => {
         throw connectionReset();
@@ -77,12 +77,45 @@ describe("operation identity", () => {
     const second = def.create(undefined, { id: "same" }); // not active yet, so allowed
 
     await expect(first.run()).rejects.toThrow(); // now uncertain, i.e. active
-    expect(() => def.create(undefined, { id: "same" })).toThrow(MutationGuardError);
+    expect(() => def.create(undefined, { id: "same" })).toThrow(OrynthError);
     await expect(second.run()).rejects.toThrow(/already active/);
   });
 
+  it("sends the input as it is at the first request, and never a changed one under the same key", async () => {
+    const sent: unknown[] = [];
+    const def = createOrynth().define({
+      name: "op",
+      execute: async ({ input }: ExecuteContext<{ quantity: number }>) => {
+        sent.push({ ...input });
+        throw connectionReset();
+      },
+    });
+    const form = { quantity: 1 };
+    const op = def.create(form);
+    form.quantity = 2; // edits before the first request are fine
+    await op.run().catch(() => {});
+
+    await op.retry().catch(() => {}); // unchanged: resent
+    form.quantity = 3;
+    await expect(op.retry()).rejects.toThrow(/input of operation .* changed after it was sent/);
+    expect(sent).toEqual([{ quantity: 2 }, { quantity: 2 }]);
+  });
+
+  it("finds the tracked operation for an ID with get()", async () => {
+    const guard = createOrynth();
+    const orders = guard.define({ name: "orders", execute: async () => "ok" });
+    const refunds = guard.define({ name: "refunds", execute: async () => "ok" });
+
+    const op = orders.create(undefined, { id: "checkout-1" });
+    expect(orders.get("checkout-1")).toBeUndefined(); // not started yet
+    const run = op.run();
+    expect(orders.get("checkout-1")).toBe(op);
+    expect(refunds.get("checkout-1")).toBeUndefined();
+    await run;
+  });
+
   it("sends the key in the default Idempotency-Key header", async () => {
-    const def = createMutationGuard().define({
+    const def = createOrynth().define({
       name: "op",
       execute: async ({ headers }) => headers,
     });
@@ -91,7 +124,7 @@ describe("operation identity", () => {
   });
 
   it("uses a configurable header name, per guard and per definition", async () => {
-    const guard = createMutationGuard({ idempotencyHeader: "X-Idempotency-Key" });
+    const guard = createOrynth({ idempotencyHeader: "X-Idempotency-Key" });
     const a = guard.define({ name: "a", execute: async ({ headers }) => headers });
     const b = guard.define({ name: "b", idempotencyHeader: "X-Request-Id", execute: async ({ headers }) => headers });
 
@@ -99,12 +132,12 @@ describe("operation identity", () => {
     const opB = b.create();
     await expect(opA.run()).resolves.toEqual({ "X-Idempotency-Key": opA.idempotencyKey });
     await expect(opB.run()).resolves.toEqual({ "X-Request-Id": opB.idempotencyKey });
-    expect(() => createMutationGuard({ idempotencyHeader: "Bad Header" })).toThrow(TypeError);
+    expect(() => createOrynth({ idempotencyHeader: "Bad Header" })).toThrow(TypeError);
   });
 
   it("does not derive keys from the payload when a failed operation is recreated", async () => {
     const keys: string[] = [];
-    const def = createMutationGuard().define({
+    const def = createOrynth().define({
       name: "op",
       execute: async ({ idempotencyKey }) => {
         keys.push(idempotencyKey);

@@ -1,8 +1,9 @@
 import { describe, expectTypeOf, it } from "vitest";
 import {
-  createMutationGuard,
+  createOrynth,
   type ConcurrencyStrategy,
   type ExecuteContext,
+  type LockManagerLike,
   type Operation,
   type OperationDefinition,
   type OperationState,
@@ -12,7 +13,7 @@ import {
 type OrderInput = { productId: string; quantity: number };
 type Order = { id: string };
 
-const guard = createMutationGuard();
+const guard = createOrynth();
 
 // Assertions use method references so nothing executes at runtime.
 describe("type inference", () => {
@@ -35,6 +36,7 @@ describe("type inference", () => {
     expectTypeOf(op.state).toEqualTypeOf<OperationState<Order>>();
     expectTypeOf(op.state.result).toEqualTypeOf<Order | undefined>();
     expectTypeOf(createOrder.restore).returns.toEqualTypeOf<Promise<Operation<OrderInput, Order>[]>>();
+    expectTypeOf(createOrder.get).returns.toEqualTypeOf<Operation<OrderInput, Order> | undefined>();
 
     // @ts-expect-error input is required
     createOrder.create();
@@ -80,6 +82,10 @@ describe("type inference", () => {
       // @ts-expect-error result must be an Order
       reconcile: async () => ({ status: "succeeded", result: 42 }),
     });
+  });
+
+  it("accepts the browser's navigator.locks", () => {
+    expectTypeOf(navigator.locks).toMatchTypeOf<LockManagerLike>();
   });
 
   it("returns untyped operations from guard.restore()", () => {

@@ -1,10 +1,10 @@
 // Loads the built package through its `exports` map, as a CommonJS consumer would.
 const assert = require("node:assert/strict");
-const { createMutationGuard, OperationUncertainError, StorageError } = require("mutation-guard");
-const { indexedDBStorage, memoryStorage } = require("mutation-guard/storage");
+const { createOrynth, OperationUncertainError, StorageError } = require("orynth");
+const { indexedDBStorage, memoryStorage } = require("orynth/storage");
 
 (async () => {
-  const guard = createMutationGuard({ storage: memoryStorage() });
+  const guard = createOrynth({ storage: memoryStorage() });
   const op = guard
     .define({
       name: "create-order",
@@ -16,7 +16,7 @@ const { indexedDBStorage, memoryStorage } = require("mutation-guard/storage");
   await assert.rejects(op.run(), OperationUncertainError);
 
   // Errors from the storage entry are wrapped by the core entry, so instanceof works.
-  const idb = createMutationGuard({ storage: indexedDBStorage() });
+  const idb = createOrynth({ storage: indexedDBStorage() });
   await assert.rejects(idb.define({ name: "x", execute: async () => 1 }).create().run(), StorageError);
   console.log("CJS smoke test passed");
 })().catch((error) => {

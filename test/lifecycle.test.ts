@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createMutationGuard,
+  createOrynth,
   InvalidTransitionError,
-  MutationGuardError,
+  OrynthError,
   OperationInProgressError,
   OperationUncertainError,
   type OperationStatus,
@@ -35,7 +35,7 @@ async function uncertainOperation(...outcomes: (ReconcileResult<string> | Error)
     if (outcome instanceof Error) throw outcome;
     return outcome;
   });
-  const op = createMutationGuard().define({ name: "op", execute, reconcile }).create();
+  const op = createOrynth().define({ name: "op", execute, reconcile }).create();
   await op.run().catch(() => {});
   expect(op.status).toBe("uncertain");
   const statuses: OperationStatus[] = [];
@@ -50,7 +50,7 @@ describe("state machine", () => {
   });
 
   it("refuses to reconcile an operation that never ran", async () => {
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute: async () => 1, reconcile: async () => ({ status: "not-found" }) })
       .create();
     await expect(op.reconcile()).rejects.toMatchObject({ from: "created", to: "recovering" });
@@ -84,7 +84,7 @@ describe("reconciliation", () => {
     const { op } = await uncertainOperation({ status: "failed" });
     const outcome = await op.reconcile();
     expect(outcome.status).toBe("failed");
-    expect(op.state.error).toBeInstanceOf(MutationGuardError);
+    expect(op.state.error).toBeInstanceOf(OrynthError);
   });
 
   it.each([{ status: "pending" }, { status: "not-found" }, { status: "unknown" }] as const)(
@@ -119,7 +119,7 @@ describe("reconciliation", () => {
   it("treats a malformed reconcile result as unknown", async () => {
     const { op } = await uncertainOperation({ status: "done" } as never);
     const outcome = await op.reconcile();
-    expect(outcome).toMatchObject({ status: "unknown", error: expect.any(MutationGuardError) });
+    expect(outcome).toMatchObject({ status: "unknown", error: expect.any(OrynthError) });
     expect(op.status).toBe("uncertain");
   });
 
@@ -130,7 +130,7 @@ describe("reconciliation", () => {
   });
 
   it("requires a reconcile function", async () => {
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({
         name: "op",
         execute: async () => {
@@ -145,7 +145,7 @@ describe("reconciliation", () => {
 
   it("returns the known outcome of a resolved operation without asking the backend", async () => {
     const reconcile = vi.fn();
-    const op = createMutationGuard().define({ name: "op", execute: async () => "ok", reconcile }).create();
+    const op = createOrynth().define({ name: "op", execute: async () => "ok", reconcile }).create();
     await op.run();
     await expect(op.reconcile()).resolves.toEqual({ status: "succeeded", result: "ok" });
     expect(reconcile).not.toHaveBeenCalled();
@@ -167,7 +167,7 @@ describe("reconciliation", () => {
 
   it("cannot reconcile while a request is in flight", async () => {
     const gate = deferred<string>();
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute: () => gate.promise, reconcile: async () => ({ status: "unknown" }) })
       .create();
     const run = op.run();
@@ -196,7 +196,7 @@ describe("reconciliation", () => {
       .mockRejectedValueOnce(connectionReset())
       .mockResolvedValueOnce("resubmitted");
     const gate = deferred<ReconcileResult<string>>();
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", concurrency: "queue", execute, reconcile: () => gate.promise })
       .create();
     await op.run().catch(() => {});
@@ -213,7 +213,7 @@ describe("reconciliation", () => {
 
   it("lets a listener start reconciliation as soon as the outcome becomes uncertain", async () => {
     const reconciled = deferred<ReconcileResult<string>>();
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({
         name: "op",
         execute: async (): Promise<string> => {

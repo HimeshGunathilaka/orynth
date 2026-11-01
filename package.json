@@ -1,6 +1,6 @@
 {
-  "name": "mutation-guard",
-  "version": "0.1.0",
+  "name": "orynth",
+  "version": "1.0.0",
   "description": "Client-side reliability for mutations: stable operation identity, idempotency keys, duplicate-execution protection, controlled retries, and recovery of uncertain outcomes.",
   "keywords": [
     "idempotency",
@@ -16,6 +16,14 @@
   ],
   "license": "MIT",
   "author": "Himesh Gunathilake",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HimeshGunathilaka/orynth.git"
+  },
+  "homepage": "https://github.com/HimeshGunathilaka/orynth#readme",
+  "bugs": {
+    "url": "https://github.com/HimeshGunathilaka/orynth/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -44,23 +52,34 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "storage": [
+        "./dist/storage.d.ts"
+      ]
+    }
+  },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.no-locks.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
-    "check:package": "publint && attw --pack . --profile node16",
+    "check:package": "publint && attw --pack .",
     "prepublishOnly": "npm run typecheck && npm test && npm run build && npm run test:dist && npm run check:package",
-    "test:dist": "node scripts/smoke.mjs && node scripts/smoke.cjs"
+    "test:dist": "node scripts/smoke.mjs && node scripts/smoke.cjs",
+    "demo:checkout": "npm run build && node examples/checkout/server.mjs",
+    "test:checkout": "npm run build && playwright test --config examples/checkout/playwright.config.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
+    "@playwright/test": "1.64.1",
     "@types/node": "^26.6.6",
     "axios": "^1.21.0",
     "fake-indexeddb": "^6.2.7",

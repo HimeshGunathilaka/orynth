@@ -1,9 +1,11 @@
-export { createMutationGuard } from "./guard.js";
+export { createOrynth } from "./guard.js";
 export { isUncertainError } from "./classify.js";
 export { memoryStorage } from "./storage/memory.js";
 export {
+  IdempotencyKeyExpiredError,
   InvalidTransitionError,
-  MutationGuardError,
+  OrynthError,
+  OperationConflictError,
   OperationInProgressError,
   OperationUncertainError,
   StorageError,
@@ -14,8 +16,9 @@ export type {
   CreateOptions,
   DefineOptions,
   ExecuteContext,
-  MutationGuard,
-  MutationGuardOptions,
+  LockManagerLike,
+  Orynth,
+  OrynthOptions,
   Operation,
   OperationDefinition,
   OperationRecord,

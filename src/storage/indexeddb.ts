@@ -1,10 +1,15 @@
 import type { OperationRecord, OperationStorage } from "../types.js";
 
+/** An `IDBFactory`, typed without the DOM library so Node projects can import this module. */
+export interface IDBFactoryLike {
+  open(name: string, version?: number): unknown;
+}
+
 export interface IndexedDBStorageOptions {
-  /** Database name. Use different names to keep separate guards apart. Default `"mutation-guard"`. */
+  /** Database name. Use different names to keep separate instances apart. Default `"orynth"`. */
   databaseName?: string;
-  /** The `IDBFactory` to use. Default `globalThis.indexedDB`. */
-  indexedDB?: IDBFactory;
+  /** The `IDBFactory` to use, e.g. from `fake-indexeddb`. Default `globalThis.indexedDB`. */
+  indexedDB?: IDBFactoryLike;
 }
 
 const STORE = "operations";
@@ -19,13 +24,13 @@ const VERSION = 1;
  * be structured-cloneable.
  */
 export function indexedDBStorage(options: IndexedDBStorageOptions = {}): OperationStorage {
-  const { databaseName = "mutation-guard" } = options;
+  const { databaseName = "orynth" } = options;
   let connection: Promise<IDBDatabase> | undefined;
 
   function open(): Promise<IDBDatabase> {
     if (connection) return connection;
     const opening = new Promise<IDBDatabase>((resolve, reject) => {
-      const factory = options.indexedDB ?? (globalThis.indexedDB as IDBFactory | undefined);
+      const factory = (options.indexedDB ?? globalThis.indexedDB) as IDBFactory | undefined;
       if (!factory) throw new Error("IndexedDB is not available in this environment");
       const request = factory.open(databaseName, VERSION);
       request.onupgradeneeded = () => {
@@ -85,6 +90,9 @@ export function indexedDBStorage(options: IndexedDBStorageOptions = {}): Operati
   return {
     async set(record) {
       await transact("readwrite", (store) => store.put(record));
+    },
+    get(id) {
+      return transact("readonly", (store) => store.get(id) as IDBRequest<OperationRecord | undefined>);
     },
     async delete(id) {
       await transact("readwrite", (store) => store.delete(id));

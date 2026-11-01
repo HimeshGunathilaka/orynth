@@ -1,6 +1,6 @@
 import { forceCloseDatabase, IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMutationGuard, StorageError, type OperationRecord } from "../src/index.js";
+import { createOrynth, IdempotencyKeyExpiredError, StorageError, type OperationRecord } from "../src/index.js";
 import { indexedDBStorage } from "../src/storage/index.js";
 import { connectionReset, flush } from "./helpers.js";
 
@@ -12,6 +12,7 @@ const record = (overrides: Partial<OperationRecord> = {}): OperationRecord => ({
   attempts: 1,
   createdAt: 1,
   updatedAt: 1,
+  revision: "rev-1",
   ...overrides,
 });
 
@@ -113,7 +114,7 @@ describe("indexedDBStorage", () => {
     await storage.set(record());
 
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase("mutation-guard");
+      const request = indexedDB.deleteDatabase("orynth");
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
       request.onblocked = () => reject(new Error("blocked by an open connection"));
@@ -125,12 +126,12 @@ describe("indexedDBStorage", () => {
 
   it("rejects inputs that cannot be stored, without sending the request", async () => {
     const execute = vi.fn(async () => "ok");
-    const guard = createMutationGuard({ storage: indexedDBStorage({ indexedDB: new IDBFactory() }) });
-    const op = guard.define({ name: "op", persistInput: true, execute }).create({ callback: () => {} });
+    const guard = createOrynth({ storage: indexedDBStorage({ indexedDB: new IDBFactory() }) });
+    // Neither structured clone (the function) nor JSON (the BigInt) can store it.
+    const op = guard.define({ name: "op", persistInput: true, execute }).create({ callback: () => {}, amount: 1n });
 
     const error = await op.run().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(StorageError);
-    expect((error as StorageError).cause).toMatchObject({ name: "DataCloneError" });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -146,15 +147,15 @@ describe("indexedDBStorage", () => {
       return order ? { status: "succeeded" as const, result: order } : { status: "not-found" as const };
     };
 
-    // Before the reload.
-    const before = createMutationGuard({ storage: indexedDBStorage({ indexedDB }) });
+    // Before the reload. Its request never finishes; the browser releases the page's locks on reload.
+    const before = createOrynth({ storage: indexedDBStorage({ indexedDB }), locks: false });
     const op = before.define({ name: "create-order", execute, reconcile }).create();
     void op.run();
     await vi.waitFor(() => expect(serverOrders.size).toBe(1));
 
     // After the reload: a new guard, a new connection, the same database.
     const storage = indexedDBStorage({ indexedDB });
-    const after = createMutationGuard({ storage });
+    const after = createOrynth({ storage });
     const createOrder = after.define({ name: "create-order", execute, reconcile });
     const [restored] = await createOrder.restore();
 
@@ -177,12 +178,16 @@ describe("indexedDBStorage", () => {
         return "order-1";
       },
     };
-    const op = createMutationGuard({ storage: indexedDBStorage({ indexedDB }) })
+    const op = createOrynth({ storage: indexedDBStorage({ indexedDB }) })
       .define(definition)
       .create({ productId: "123" });
     await op.run().catch(() => {});
+    // Let its final write land; until then, without Web Locks, its lease keeps other tabs off it.
+    await vi.waitFor(async () =>
+      expect((await indexedDBStorage({ indexedDB }).list())[0]).toMatchObject({ status: "uncertain" }),
+    );
 
-    const [restored] = await createMutationGuard({ storage: indexedDBStorage({ indexedDB }) })
+    const [restored] = await createOrynth({ storage: indexedDBStorage({ indexedDB }) })
       .define(definition)
       .restore();
     expect(restored!.input).toEqual({ productId: "123" });
@@ -193,20 +198,24 @@ describe("indexedDBStorage", () => {
     ]);
   });
 
-  it("deletes expired records on restore", async () => {
+  it("restores expired records instead of deleting them, but never resends them", async () => {
     vi.useFakeTimers({ now: 0, toFake: ["Date"] });
     try {
       const storage = indexedDBStorage({ indexedDB: new IDBFactory() });
-      await storage.set(record({ id: "old", expiresAt: 1_000 }));
+      await storage.set(record({ id: "old", expiresAt: 1_000, input: { productId: "1" } }));
       await storage.set(record({ id: "fresh", expiresAt: 10_000 }));
       await storage.set(record({ id: "forever" }));
       vi.setSystemTime(5_000);
 
-      const guard = createMutationGuard({ storage });
-      guard.define({ name: "create-order", execute: async () => "ok" });
+      const guard = createOrynth({ storage });
+      guard.define({ name: "create-order", execute: async () => "ok", persistInput: true });
       const restored = await guard.restore();
 
-      expect(restored.map((op) => op.id).sort()).toEqual(["forever", "fresh"]);
+      // An unconfirmed operation is never dropped silently; the app reconciles or discards it.
+      expect(restored.map((op) => op.id).sort()).toEqual(["forever", "fresh", "old"]);
+      const old = restored.find((op) => op.id === "old")!;
+      await expect(old.retry()).rejects.toBeInstanceOf(IdempotencyKeyExpiredError);
+      await old.discard();
       expect((await storage.list()).map((r) => r.id).sort()).toEqual(["forever", "fresh"]);
     } finally {
       vi.useRealTimers();

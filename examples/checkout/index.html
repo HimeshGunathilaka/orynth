@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Did the order go through? · Orynth</title>
+<link rel="stylesheet" href="/style.css">
+<main>
+  <header><strong>Orynth</strong><span>Checkout demo</span></header>
+  <h1>Did the order<br>go through?</h1>
+  <p class="intro">Place a test order and lose the confirmation. Reload the page, then ask the server what happened.</p>
+  <div class="panels">
+    <section aria-labelledby="customer">
+      <h2 id="customer">Customer checkout</h2>
+      <p>1 × Field notebook</p>
+      <label><input id="drop" type="checkbox" checked> Drop the confirmation after saving</label>
+      <p id="message" role="status">Opening checkout…</p>
+      <button id="place" disabled>Place order</button>
+      <button id="recover" hidden>Check order status</button>
+      <button id="again" hidden>Start another checkout</button>
+    </section>
+    <section aria-labelledby="server">
+      <h2 id="server">Server ledger</h2>
+      <p class="total" id="total">—</p>
+      <p>orders saved for this checkout</p>
+      <small>Checkout ID</small><code id="key">—</code>
+    </section>
+  </div>
+</main>
+<script type="module" src="/checkout.js"></script>
+</html>

@@ -28,10 +28,17 @@ export function assertStrategy(value: unknown): asserts value is ConcurrencyStra
   }
 }
 
-/** `ttl` is a positive number of milliseconds or `Infinity`. */
-export function assertTtl(value: unknown): asserts value is number {
+/** A duration: a positive number of milliseconds or `Infinity`. */
+export function assertTtl(value: unknown, name = "ttl"): asserts value is number {
   if (typeof value !== "number" || Number.isNaN(value) || value <= 0) {
-    throw new RangeError(`ttl must be a positive number of milliseconds, got ${String(value)}`);
+    throw new RangeError(`${name} must be a positive number of milliseconds, got ${String(value)}`);
+  }
+}
+
+/** A point in time in epoch milliseconds; `Infinity` for never. */
+export function assertTimestamp(name: string, value: unknown): asserts value is number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new TypeError(`${name} must be a number of epoch milliseconds, got ${String(value)}`);
   }
 }
 

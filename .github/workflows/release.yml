@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC) + provenance
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Check that the release tag matches package.json
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      # prepublishOnly runs the typecheck, both test runs, the build, the built-package smoke tests
+      # and the package checks.
+      - run: npm publish --provenance --access public

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createMutationGuard,
+  createOrynth,
   OperationInProgressError,
   OperationUncertainError,
   type ConcurrencyStrategy,
@@ -24,7 +24,7 @@ function controlled(concurrency?: ConcurrencyStrategy) {
       running--;
     }
   });
-  const def = createMutationGuard().define({ name: "op", execute, ...(concurrency && { concurrency }) });
+  const def = createOrynth().define({ name: "op", execute, ...(concurrency && { concurrency }) });
   return { def, execute, gates, maxRunning: () => maxRunning };
 }
 
@@ -32,7 +32,7 @@ describe("execution", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("executes, stores the result and walks created → pending → succeeded", async () => {
-    const def = createMutationGuard().define({
+    const def = createOrynth().define({
       name: "create-order",
       execute: async ({ input }: { input: { quantity: number } }) => ({ orderId: "o1", ...input }),
     });
@@ -51,7 +51,7 @@ describe("execution", () => {
 
   it("does not execute a succeeded operation again", async () => {
     const execute = vi.fn(async () => "ok");
-    const op = createMutationGuard().define({ name: "op", execute }).create();
+    const op = createOrynth().define({ name: "op", execute }).create();
     await op.run();
     await expect(op.run()).resolves.toBe("ok");
     await expect(op.retry()).resolves.toBe("ok");
@@ -147,7 +147,7 @@ describe("execution", () => {
     const execute = vi.fn(async () => {
       throw error;
     });
-    const op = createMutationGuard().define({ name: "op", execute }).create();
+    const op = createOrynth().define({ name: "op", execute }).create();
 
     await expect(op.run()).rejects.toBe(error);
     expect(op.state).toMatchObject({ status: "failed", error });
@@ -161,7 +161,7 @@ describe("execution", () => {
     const execute = vi.fn(async () => {
       throw cause;
     });
-    const op = createMutationGuard().define({ name: "op", execute }).create();
+    const op = createOrynth().define({ name: "op", execute }).create();
 
     const error = await op.run().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(OperationUncertainError);
@@ -175,7 +175,7 @@ describe("execution", () => {
 
   it("lets the developer decide which errors are uncertain", async () => {
     class GatewayTimeout extends Error {}
-    const def = createMutationGuard().define({
+    const def = createOrynth().define({
       name: "op",
       isUncertain: (error) => error instanceof GatewayTimeout,
       execute: async ({ input }: { input: "timeout" | "network" }) => {
@@ -194,7 +194,7 @@ describe("execution", () => {
     const reported: unknown[] = [];
     vi.stubGlobal("reportError", (error: unknown) => reported.push(error));
     const bug = new Error("classifier bug");
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({
         name: "op",
         isUncertain: () => {
@@ -212,7 +212,7 @@ describe("execution", () => {
   });
 
   it("handles execute functions that throw synchronously", async () => {
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({
         name: "op",
         execute: (() => {
@@ -227,7 +227,7 @@ describe("execution", () => {
   it("isolates listener errors from the operation", async () => {
     const reported: unknown[] = [];
     vi.stubGlobal("reportError", (error: unknown) => reported.push(error));
-    const op = createMutationGuard().define({ name: "op", execute: async () => "ok" }).create();
+    const op = createOrynth().define({ name: "op", execute: async () => "ok" }).create();
     const seen: OperationStatus[] = [];
     op.subscribe(() => {
       throw new Error("listener bug");
@@ -242,7 +242,7 @@ describe("execution", () => {
   it("falls back to console.error where reportError does not exist, as in Node", async () => {
     expect(globalThis).not.toHaveProperty("reportError");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const op = createMutationGuard().define({ name: "op", execute: async () => "ok" }).create();
+    const op = createOrynth().define({ name: "op", execute: async () => "ok" }).create();
     op.subscribe(() => {
       throw new Error("listener bug");
     });
@@ -251,7 +251,7 @@ describe("execution", () => {
   });
 
   it("stops notifying after unsubscribe", async () => {
-    const op = createMutationGuard().define({ name: "op", execute: async () => "ok" }).create();
+    const op = createOrynth().define({ name: "op", execute: async () => "ok" }).create();
     const listener = vi.fn();
     const unsubscribe = op.subscribe(listener);
     unsubscribe();
@@ -260,7 +260,7 @@ describe("execution", () => {
   });
 
   it("publishes immutable state snapshots", async () => {
-    const op = createMutationGuard().define({ name: "op", execute: async () => "ok" }).create();
+    const op = createOrynth().define({ name: "op", execute: async () => "ok" }).create();
     const before = op.state;
     await op.run();
     expect(Object.isFrozen(op.state)).toBe(true);
@@ -269,7 +269,7 @@ describe("execution", () => {
   });
 
   it("validates definitions", () => {
-    const guard = createMutationGuard();
+    const guard = createOrynth();
     guard.define({ name: "taken", execute: async () => 1 });
     expect(() => guard.define({ name: "taken", execute: async () => 1 })).toThrow(/already defined/);
     expect(() => guard.define({ name: "", execute: async () => 1 })).toThrow(TypeError);

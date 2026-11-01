@@ -49,6 +49,7 @@ export function flakyStorage() {
         : (inner[method] as (...a: typeof args) => ReturnType<OperationStorage[K]>)(...args);
   const storage: OperationStorage = {
     set: guarded("set"),
+    get: guarded("get"),
     delete: guarded("delete"),
     list: guarded("list"),
   };

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createMutationGuard,
+  createOrynth,
   memoryStorage,
   StorageError,
   type OperationRecord,
@@ -16,6 +16,7 @@ const record = (overrides: Partial<OperationRecord> = {}): OperationRecord => ({
   attempts: 1,
   createdAt: 1,
   updatedAt: 1,
+  revision: "rev-1",
   ...overrides,
 });
 
@@ -49,7 +50,7 @@ describe("persistence", () => {
   it("saves the pending record before the request is sent", async () => {
     const storage = memoryStorage();
     let storedDuringExecute: OperationRecord[] = [];
-    const op = createMutationGuard({ storage })
+    const op = createOrynth({ storage })
       .define({
         name: "op",
         execute: async () => {
@@ -69,7 +70,7 @@ describe("persistence", () => {
 
   it("persists the input only with persistInput", async () => {
     const storage = memoryStorage();
-    const def = createMutationGuard({ storage }).define({
+    const def = createOrynth({ storage }).define({
       name: "op",
       persistInput: true,
       execute: async (): Promise<string> => {
@@ -84,7 +85,7 @@ describe("persistence", () => {
 
   it("keeps uncertain records with a serialized error and removes resolved ones", async () => {
     const storage = memoryStorage();
-    const def = createMutationGuard({ storage }).define({
+    const def = createOrynth({ storage }).define({
       name: "op",
       execute: async ({ input }: { input: "ok" | "lost" | "rejected" }) => {
         if (input === "lost") throw connectionReset();
@@ -108,7 +109,7 @@ describe("persistence", () => {
   it("sets expiresAt from ttl, or omits it for Infinity", async () => {
     vi.useFakeTimers({ now: 1_000 });
     const storage = memoryStorage();
-    const guard = createMutationGuard({ storage, ttl: 5_000 });
+    const guard = createOrynth({ storage, ttl: 5_000 });
     const lost = async (): Promise<string> => {
       throw connectionReset();
     };
@@ -121,23 +122,25 @@ describe("persistence", () => {
     expect(b).not.toHaveProperty("expiresAt");
   });
 
-  it("measures ttl from when each execution starts, not from create()", async () => {
+  it("measures ttl from the first request, like the backend's key retention", async () => {
     vi.useFakeTimers({ now: 0 });
     const storage = memoryStorage();
     const execute = vi.fn(async (): Promise<string> => {
       throw connectionReset();
     });
-    const op = createMutationGuard({ storage, ttl: 1_000 }).define({ name: "op", execute }).create();
+    const op = createOrynth({ storage, ttl: 10_000 }).define({ name: "op", execute }).create();
 
-    vi.setSystemTime(5_000);
+    vi.setSystemTime(5_000); // not from create()
     await op.run().catch(() => {});
     await vi.runAllTimersAsync();
-    expect((await storage.list())[0]!.expiresAt).toBe(6_000);
+    expect(op.state.expiresAt).toBe(15_000);
+    expect((await storage.list())[0]!.expiresAt).toBe(15_000);
 
-    vi.setSystemTime(9_000);
+    vi.setSystemTime(9_000); // a retry within the window does not extend it
     await op.retry().catch(() => {});
     await vi.runAllTimersAsync();
-    expect((await storage.list())[0]!.expiresAt).toBe(10_000);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect((await storage.list())[0]!.expiresAt).toBe(15_000);
   });
 
   it("writes records in the order the states were produced, even with a slow storage", async () => {
@@ -159,7 +162,7 @@ describe("persistence", () => {
         await inner.delete(id);
       },
     };
-    const def = createMutationGuard({ storage }).define({
+    const def = createOrynth({ storage }).define({
       name: "op",
       execute: async (): Promise<string> => {
         throw connectionReset();
@@ -180,7 +183,7 @@ describe("storage failures", () => {
   it("does not send the request if the pending record cannot be saved", async () => {
     const { storage, fail, heal } = flakyStorage();
     const execute = vi.fn(async () => "ok");
-    const op = createMutationGuard({ storage }).define({ name: "op", execute }).create();
+    const op = createOrynth({ storage }).define({ name: "op", execute }).create();
 
     fail("set");
     const error = await op.run().catch((e: unknown) => e);
@@ -196,7 +199,7 @@ describe("storage failures", () => {
   it("reports later write failures without losing the in-memory state", async () => {
     const { storage, fail } = flakyStorage();
     const onStorageError = vi.fn();
-    const op = createMutationGuard({ storage, onStorageError })
+    const op = createOrynth({ storage, onStorageError })
       .define({
         name: "op",
         execute: async () => {
@@ -216,7 +219,7 @@ describe("storage failures", () => {
   it("logs storage errors by default", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { storage, fail } = flakyStorage();
-    const op = createMutationGuard({ storage })
+    const op = createOrynth({ storage })
       .define({
         name: "op",
         execute: async () => {
@@ -233,12 +236,12 @@ describe("storage failures", () => {
   it("fails restore loudly when records cannot be loaded", async () => {
     const { storage, fail } = flakyStorage();
     fail("list");
-    await expect(createMutationGuard({ storage }).restore()).rejects.toBeInstanceOf(StorageError);
+    await expect(createOrynth({ storage }).restore()).rejects.toBeInstanceOf(StorageError);
   });
 
   it("rejects invalid storage adapters", () => {
-    expect(() => createMutationGuard({ storage: {} as never })).toThrow(TypeError);
-    expect(() => createMutationGuard({ storage: "indexeddb" as never })).toThrow(TypeError);
+    expect(() => createOrynth({ storage: {} as never })).toThrow(TypeError);
+    expect(() => createOrynth({ storage: "indexeddb" as never })).toThrow(TypeError);
   });
 
   it("serializes the pending write behind a slow earlier write", async () => {
@@ -254,7 +257,7 @@ describe("storage failures", () => {
       },
     };
     const execute = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new HttpError(422));
-    const op = createMutationGuard({ storage }).define({ name: "op", execute }).create();
+    const op = createOrynth({ storage }).define({ name: "op", execute }).create();
 
     gateDelete = true;
     await op.run().catch(() => {}); // failed → delete is now stuck

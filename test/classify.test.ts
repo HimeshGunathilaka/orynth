@@ -17,6 +17,7 @@ describe("isUncertainError", () => {
     ["an Axios network error", Object.assign(withCode("ERR_NETWORK"), { isAxiosError: true })],
     ["an Axios error without a response", { isAxiosError: true, message: "unknown" }],
     ["HTTP 408", new HttpError(408)],
+    ["HTTP 409 (Idempotency-Key draft: same key still processing)", new HttpError(409)],
     ["HTTP 500", new HttpError(500)],
     ["HTTP 502", { statusCode: 502 }],
     ["HTTP 504 (Axios)", { isAxiosError: true, response: { status: 504 } }],
@@ -25,6 +26,14 @@ describe("isUncertainError", () => {
     ["a wrapped network error", new Error("Saving failed", { cause: new TypeError("Failed to fetch") })],
     ["a wrapped timeout", new Error("Saving failed", { cause: new DOMException("timed out", "TimeoutError") })],
     ["a nested guarded operation", new OperationUncertainError("inner", new Error("unknown"))],
+    // The Fetch standard reports all network errors as TypeErrors, whatever the message.
+    ["a body cut off mid-stream (Firefox)", new TypeError("Content-Length header of network response exceeds response Body.")],
+    ["any other TypeError", new TypeError("x is not a function")],
+    ["a response body that isn't JSON (Response.json())", new SyntaxError("Unexpected end of JSON input")],
+    ["an Apollo/urql network error", { name: "ApolloError", networkError: new TypeError("Load failed") }],
+    ["a GraphQL error wrapping a timeout", { originalError: new DOMException("timed out", "TimeoutError") }],
+    ["a dropped connection (Cloudflare Workers)", new Error("Network connection lost")],
+    ["a legacy XHR network error", new DOMException("A network error occurred.", "NetworkError")],
   ])("uncertain: %s", (_, error) => {
     expect(isUncertainError(error)).toBe(true);
   });
@@ -34,11 +43,9 @@ describe("isUncertainError", () => {
     ["a wrapped refused connection", new Error("Saving failed", { cause: connectionRefused() })],
     ["a DNS failure", withCode("ENOTFOUND")],
     ["HTTP 400", new HttpError(400)],
-    ["HTTP 409", new HttpError(409)],
     ["HTTP 422 (Axios)", { isAxiosError: true, response: { status: 422 }, code: "ERR_BAD_REQUEST" }],
     ["HTTP 429", new HttpError(429)],
     ["an application error", new Error("Order creation failed")],
-    ["an unrelated TypeError", new TypeError("x is not a function")],
     ["a string", "boom"],
     ["undefined", undefined],
   ])("not uncertain: %s", (_, error) => {

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createMutationGuard,
+  createOrynth,
   memoryStorage,
-  MutationGuardError,
+  OrynthError,
+  OperationConflictError,
   OperationUncertainError,
   type ExecuteContext,
   type OperationRecord,
@@ -15,7 +16,7 @@ type OrderInput = { productId: string; quantity: number };
 
 /** The same app code, started once per "page load" against shared storage. */
 function app(storage: OperationStorage, backend: ReturnType<typeof orderBackend>, persistInput = false) {
-  const guard = createMutationGuard({ storage });
+  const guard = createOrynth({ storage });
   const execute = vi.fn(({ input, idempotencyKey }: ExecuteContext<OrderInput>) =>
     backend.createOrder(input, idempotencyKey),
   );
@@ -32,6 +33,7 @@ const stored = (status: OperationRecord["status"], overrides: Partial<OperationR
   attempts: 1,
   createdAt: 1,
   updatedAt: 1,
+  revision: "rev-1",
   ...overrides,
 });
 
@@ -90,18 +92,17 @@ describe("recovery", () => {
     expect(op!.state).toMatchObject({ attempts: 3, error });
   });
 
-  it("returns live operations instead of stale copies", async () => {
+  it("does not return operations that are still running", async () => {
     const storage = memoryStorage();
     const gate = deferred<string>();
-    const guard = createMutationGuard({ storage });
+    const guard = createOrynth({ storage });
     const def = guard.define({ name: "op", execute: () => gate.promise });
     const op = def.create();
     const run = op.run();
     await vi.waitFor(async () => expect(await storage.list()).toHaveLength(1));
 
-    // A request is still in flight in this session: it must not be marked uncertain.
-    const restored = await guard.restore();
-    expect(restored).toEqual([op]);
+    // A request is still in flight in this session: it needs no recovery and must not be marked uncertain.
+    expect(await guard.restore()).toEqual([]);
     expect(op.status).toBe("pending");
 
     gate.resolve("ok");
@@ -180,7 +181,7 @@ describe("recovery", () => {
     const [op] = await guard.restore();
 
     expect(op!.input).toBeUndefined();
-    await expect(op!.retry()).rejects.toThrow(MutationGuardError);
+    await expect(op!.retry()).rejects.toThrow(OrynthError);
     await expect(op!.retry()).rejects.toThrow(/input was not persisted/);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -225,7 +226,7 @@ describe("ID ownership", () => {
       fail("delete");
       return "ok";
     });
-    const guard = createMutationGuard({ storage, onStorageError: () => {} });
+    const guard = createOrynth({ storage, onStorageError: () => {} });
     const def = guard.define({ name: "op", execute, persistInput: true });
     const op = def.create("input");
     await op.run();
@@ -250,7 +251,7 @@ describe("ID ownership", () => {
       },
     };
     const run = deferred<string>();
-    const guard = createMutationGuard({ storage });
+    const guard = createOrynth({ storage });
     const op = guard.define({ name: "op", execute: () => run.promise }).create();
     const running = op.run();
     await vi.waitFor(async () => expect(await inner.list()).toHaveLength(1));
@@ -277,7 +278,7 @@ describe("ID ownership", () => {
         await gate.promise;
       },
     };
-    const guard = createMutationGuard({ storage });
+    const guard = createOrynth({ storage });
     const execute = vi.fn(async () => "ok");
     const op = guard.define({ name: "op", execute }).create();
     const running = op.run();
@@ -293,7 +294,7 @@ describe("ID ownership", () => {
   it("lets only one of two handles with the same custom ID execute", async () => {
     const gate = deferred<string>();
     const execute = vi.fn(() => gate.promise);
-    const def = createMutationGuard().define({ name: "op", execute });
+    const def = createOrynth().define({ name: "op", execute });
     const a = def.create(undefined, { id: "checkout-42" });
     const b = def.create(undefined, { id: "checkout-42" });
 
@@ -305,10 +306,55 @@ describe("ID ownership", () => {
   });
 
   it("frees the ID once the operation resolved and its record is gone", async () => {
-    const def = createMutationGuard().define({ name: "op", execute: async () => "ok" });
+    const def = createOrynth().define({ name: "op", execute: async () => "ok" });
     await def.create(undefined, { id: "checkout-42" }).run();
     await flush();
     await expect(def.create(undefined, { id: "checkout-42" }).run()).resolves.toBe("ok");
+  });
+});
+
+describe("cross-tab coordination", () => {
+  it("runs each execution and reconciliation under the operation's Web Lock", async () => {
+    const names: string[] = [];
+    const locks = {
+      request: <T>(name: string, _options: unknown, callback: () => Promise<T>) => {
+        names.push(name);
+        return callback();
+      },
+    };
+    const def = createOrynth({ locks }).define({
+      name: "op",
+      execute: async (): Promise<string> => {
+        throw connectionReset();
+      },
+      reconcile: async () => ({ status: "not-found" }),
+    });
+    const op = def.create();
+    await op.run().catch(() => {});
+    await op.reconcile();
+    expect(names).toEqual([`orynth:${op.id}`, `orynth:${op.id}`]);
+  });
+
+  it("works without the Web Locks API", async () => {
+    const def = createOrynth({ locks: false }).define({ name: "op", execute: async () => "ok" });
+    await expect(def.create().run()).resolves.toBe("ok");
+  });
+
+  it("refuses to resubmit an operation another guard changed in shared storage", async () => {
+    const storage = memoryStorage();
+    const backend = orderBackend();
+    backend.dropNextResponse();
+    const first = app(storage, backend, true);
+    const op = first.createOrder.create({ productId: "1", quantity: 1 });
+    await op.run().catch(() => {});
+
+    // Another guard (a second tab) restores and reconciles it, rewriting the record.
+    const [other] = await app(storage, backend, true).guard.restore();
+    await other!.reconcile({ attempts: 1 });
+    await flush();
+
+    await expect(op.retry()).rejects.toBeInstanceOf(OperationConflictError);
+    expect(first.execute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -334,7 +380,7 @@ describe("record validation", () => {
     const storage = memoryStorage();
     await storage.set({ ...stored("pending"), createdAt: "yesterday" } as never);
     const onStorageError = vi.fn();
-    const guard = createMutationGuard({ storage, onStorageError });
+    const guard = createOrynth({ storage, onStorageError });
     guard.define({ name: "create-order", execute: async () => "ok" });
     expect(await guard.restore()).toEqual([]);
     expect(onStorageError).toHaveBeenCalledWith(expect.objectContaining({ message: "Ignored a malformed operation record" }));

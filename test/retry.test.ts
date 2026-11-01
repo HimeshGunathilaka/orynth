@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMutationGuard, OperationUncertainError, type ExecuteContext } from "../src/index.js";
+import {
+  createOrynth,
+  IdempotencyKeyExpiredError,
+  OperationUncertainError,
+  type ExecuteContext,
+} from "../src/index.js";
 import { backoffDelay } from "../src/retry.js";
 import { connectionReset, HttpError } from "./helpers.js";
 
@@ -20,7 +25,7 @@ describe("retry", () => {
 
   it("is disabled by default, because resending is only safe with backend idempotency", async () => {
     const execute = scripted(connectionReset());
-    const op = createMutationGuard().define({ name: "op", execute }).create({ productId: "1" });
+    const op = createOrynth().define({ name: "op", execute }).create({ productId: "1" });
 
     await expect(op.run()).rejects.toBeInstanceOf(OperationUncertainError);
     expect(execute).toHaveBeenCalledTimes(1);
@@ -28,7 +33,7 @@ describe("retry", () => {
 
   it("retries uncertain outcomes with exponential backoff, reusing key and input", async () => {
     const execute = scripted(connectionReset(), connectionReset());
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, retry: { attempts: 3, delay: 1000, jitter: false } })
       .create({ productId: "1" });
 
@@ -55,7 +60,7 @@ describe("retry", () => {
   it("stays pending with the last error while waiting to retry", async () => {
     const error = connectionReset();
     const execute = scripted(error);
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, retry: { delay: 500, jitter: false } })
       .create({ productId: "1" });
 
@@ -70,7 +75,7 @@ describe("retry", () => {
 
   it("stops at the attempt limit and reports the outcome as uncertain", async () => {
     const execute = scripted(connectionReset(), connectionReset(), connectionReset(), connectionReset());
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, retry: { attempts: 3, delay: 10, jitter: false } })
       .create({ productId: "1" });
 
@@ -84,7 +89,7 @@ describe("retry", () => {
 
   it("does not retry permanent failures by default", async () => {
     const execute = scripted(new HttpError(422));
-    const op = createMutationGuard().define({ name: "op", execute, retry: true }).create({ productId: "1" });
+    const op = createOrynth().define({ name: "op", execute, retry: true }).create({ productId: "1" });
 
     await expect(op.run()).rejects.toBeInstanceOf(HttpError);
     expect(execute).toHaveBeenCalledTimes(1);
@@ -94,7 +99,7 @@ describe("retry", () => {
   it("supports custom retry conditions", async () => {
     const shouldRetry = vi.fn((error: unknown) => error instanceof HttpError && error.status === 429);
     const execute = scripted(new HttpError(429), new HttpError(429));
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, retry: { attempts: 5, delay: 10, shouldRetry } })
       .create({ productId: "1" });
 
@@ -108,14 +113,14 @@ describe("retry", () => {
 
   it("can be disabled explicitly", async () => {
     const execute = scripted(connectionReset());
-    const op = createMutationGuard().define({ name: "op", execute, retry: false }).create({ productId: "1" });
+    const op = createOrynth().define({ name: "op", execute, retry: false }).create({ productId: "1" });
     await expect(op.run()).rejects.toBeInstanceOf(OperationUncertainError);
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("retries manually after a failure with the same identity", async () => {
     const execute = scripted(new HttpError(503), undefined);
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, isUncertain: () => false })
       .create({ productId: "1" });
 
@@ -130,7 +135,7 @@ describe("retry", () => {
 
   it("gives each manual retry the full automatic retry budget", async () => {
     const execute = scripted(connectionReset(), connectionReset(), connectionReset());
-    const op = createMutationGuard()
+    const op = createOrynth()
       .define({ name: "op", execute, retry: { attempts: 2, delay: 10 } })
       .create({ productId: "1" });
 
@@ -144,14 +149,42 @@ describe("retry", () => {
     await expect(second).resolves.toBe("ok on attempt 4");
   });
 
+  it("stops retrying automatically once the idempotency key has expired", async () => {
+    const execute = scripted(connectionReset(), connectionReset());
+    const op = createOrynth({ ttl: 1_500 })
+      .define({ name: "op", execute, retry: { attempts: 5, delay: 1000, jitter: false } })
+      .create({ productId: "1" });
+
+    const result = op.run().catch((e: unknown) => e);
+    await vi.runAllTimersAsync(); // attempt 2 at 1 s; attempt 3 would be at 3 s, past expiry
+    expect(await result).toBeInstanceOf(OperationUncertainError);
+    expect(execute).toHaveBeenCalledTimes(2);
+    await expect(op.retry()).rejects.toBeInstanceOf(IdempotencyKeyExpiredError);
+  });
+
+  it("inherits the guard's retry default, which a definition can override", async () => {
+    const guard = createOrynth({ retry: { attempts: 2, delay: 10 } });
+    const inherits = scripted(connectionReset());
+    const overrides = scripted(connectionReset());
+    const a = guard.define({ name: "a", execute: inherits }).create({ productId: "1" });
+    const b = guard.define({ name: "b", execute: overrides, retry: false }).create({ productId: "1" });
+
+    const results = Promise.allSettled([a.run(), b.run()]);
+    await vi.runAllTimersAsync();
+    await results;
+    expect(inherits).toHaveBeenCalledTimes(2);
+    expect(overrides).toHaveBeenCalledTimes(1);
+  });
+
   it("validates retry options", () => {
-    const guard = createMutationGuard();
+    const guard = createOrynth();
     const execute = async () => 1;
     expect(() => guard.define({ name: "a", execute, retry: { attempts: 0 } })).toThrow(RangeError);
     expect(() => guard.define({ name: "b", execute, retry: { attempts: 1.5 } })).toThrow(RangeError);
     expect(() => guard.define({ name: "c", execute, retry: { delay: -1 } })).toThrow(RangeError);
     expect(() => guard.define({ name: "d", execute, retry: { factor: 0.5 } })).toThrow(RangeError);
     expect(() => guard.define({ name: "e", execute, retry: { shouldRetry: 1 as never } })).toThrow(TypeError);
+    expect(() => createOrynth({ retry: { attempts: 0 } })).toThrow(RangeError);
   });
 });
 

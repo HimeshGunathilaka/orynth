@@ -41,6 +41,13 @@ export interface OperationState<TResult = unknown> {
   readonly result?: TResult;
   /** The most recent error. Restored operations carry a `SerializedError`. */
   readonly error?: unknown;
+  /**
+   * Epoch milliseconds when the backend forgets the idempotency key: the
+   * first request plus `ttl`. After it the operation is never resubmitted.
+   */
+  readonly expiresAt?: number;
+  /** The instance's `scope` when the operation was created, e.g. the signed-in user. */
+  readonly scope?: string;
   /** Epoch milliseconds. */
   readonly createdAt: number;
   /** Epoch milliseconds. */
@@ -117,7 +124,11 @@ export interface DefineOptions<TInput, TResult> {
   name: string;
   /** Performs the mutation. Throw to signal failure. */
   execute: (context: ExecuteContext<TInput>) => Promise<TResult>;
-  /** Asks the backend what happened to an operation. Required for `reconcile()`. */
+  /**
+   * Asks the backend what happened to an operation. Required for `reconcile()`.
+   * Don't call `run()`, `retry()` or `reconcile()` of the same operation from
+   * inside it: they would wait for this reconciliation to finish.
+   */
   reconcile?: (context: ReconcileContext<TInput>) => Promise<ReconcileResult<TResult>>;
   /** Default `"join"`. */
   concurrency?: ConcurrencyStrategy;
@@ -134,10 +145,17 @@ export interface DefineOptions<TInput, TResult> {
    * restore. The input must be serializable by the storage. Default `false`.
    */
   persistInput?: boolean;
-  /** Overrides the guard's `idempotencyHeader`. */
+  /** Overrides the instance's `idempotencyHeader`. */
   idempotencyHeader?: string;
-  /** Overrides the guard's `ttl`. */
+  /** Overrides the instance's `ttl`. */
   ttl?: number;
+  /** Overrides the instance's `requireStorage`. */
+  requireStorage?: boolean;
+}
+
+/** The part of the Web Locks API (`navigator.locks`) that Orynth uses. */
+export interface LockManagerLike {
+  request<T>(name: string, options: { signal?: AbortSignal }, callback: () => Promise<T>): Promise<T>;
 }
 
 export interface CreateOptions {
@@ -145,6 +163,13 @@ export interface CreateOptions {
   id?: string;
   /** Custom idempotency key. Default: a random UUID, independent of the input. */
   idempotencyKey?: string;
+  /**
+   * For a custom `idempotencyKey` that may already have been sent, by an
+   * earlier operation: epoch milliseconds when the backend forgets it. The
+   * operation is not resent after that. Keys this instance sent itself are
+   * remembered without it. Default: `ttl` after this operation's first request.
+   */
+  expiresAt?: number;
 }
 
 /** A handle to one logical operation. */
@@ -171,6 +196,8 @@ export interface Operation<TInput = unknown, TResult = unknown> {
    * Executes the operation again with the same ID, idempotency key and input.
    * Allowed from `failed` and `uncertain`. Only safe when the backend honors
    * the idempotency key or the operation is otherwise safe to repeat.
+   * An `uncertain` operation stays uncertain unless the retry succeeds: its
+   * rejection says nothing about the earlier request.
    */
   retry(): Promise<TResult>;
   /**
@@ -181,6 +208,15 @@ export interface Operation<TInput = unknown, TResult = unknown> {
   reconcile(options?: ReconcileOptions): Promise<ReconcileResult<TResult>>;
   /** Called synchronously after every state change. Returns an unsubscribe function. */
   subscribe(listener: (state: OperationState<TResult>) => void): () => void;
+  /**
+   * Stops tracking the operation: deletes its stored record and frees its ID.
+   * Use it when the user gives up on an operation whose outcome stays unknown.
+   * Later calls to `run()`, `retry()` and `reconcile()` reject. Rejects with
+   * `OperationInProgressError` while the operation is running. If another tab
+   * or instance has changed the stored operation since this handle last saw it,
+   * or is working on it, its record is left to that tab.
+   */
+  discard(): Promise<void>;
 }
 
 type CreateArgs<TInput> = undefined extends TInput
@@ -191,22 +227,55 @@ export interface OperationDefinition<TInput, TResult> {
   readonly name: string;
   /** Starts a new logical operation with a new ID and idempotency key. */
   create(...args: CreateArgs<TInput>): Operation<TInput, TResult>;
-  /** `guard.restore()`, limited to this definition's operations. */
+  /**
+   * The operation of this definition with the given ID that the instance is
+   * running or tracking (in flight, unresolved or restored), if any.
+   */
+  get(id: string): Operation<TInput, TResult> | undefined;
+  /** `orynth.restore()`, limited to this definition's operations. */
   restore(): Promise<Operation<TInput, TResult>[]>;
 }
 
-export interface MutationGuardOptions {
+export interface OrynthOptions {
   /** `"memory"` (default) or a storage adapter such as `indexedDBStorage()`. */
   storage?: "memory" | OperationStorage;
   /** HTTP header name used for `context.headers`. Default `"Idempotency-Key"`. */
   idempotencyHeader?: string;
+  /** Default `retry` option for definitions. Default `false`. */
+  retry?: boolean | RetryOptions;
   /**
-   * How long an unresolved operation record is kept in storage after its
-   * request was last sent, in milliseconds. Expired records are deleted by
-   * `restore()`. Default 24 hours. Use `Infinity` to keep records until they
-   * resolve.
+   * How long the backend remembers an idempotency key, in milliseconds,
+   * counted from the operation's first request. After it, the operation is
+   * never resubmitted (`IdempotencyKeyExpiredError`). Default 24 hours. Use
+   * `Infinity` if keys never expire.
    */
   ttl?: number;
+  /**
+   * Who new operations belong to, such as the signed-in user's ID. `restore()`
+   * and `get()` only return operations of the current scope, and an operation
+   * of another scope can't be sent or reconciled: it is checked again right
+   * before every request and lookup. A function is called each time the scope
+   * is needed, and must return a string or `undefined`. Default: no scope.
+   */
+  scope?: string | (() => string | undefined);
+  /**
+   * When `true` (default), an operation is not sent if its record can't be
+   * saved first, so every sent operation can be recovered. When `false`, a
+   * storage failure is reported to `onStorageError` and the request is sent
+   * anyway.
+   */
+  requireStorage?: boolean;
+  /**
+   * Coordinates operations across tabs with the Web Locks API. Default
+   * `navigator.locks` where available; `false` disables it. Without it, or if
+   * a lock request fails, tabs coordinate through leases stored with records.
+   */
+  locks?: LockManagerLike | false;
+  /**
+   * How long to wait for another tab to finish with an operation before
+   * rejecting with `OperationInProgressError`, in milliseconds. Default `10000`.
+   */
+  lockTimeout?: number;
   /**
    * Called when a storage write that does not block execution fails.
    * The operation's in-memory state is still updated. Default: `console.error`.
@@ -214,7 +283,7 @@ export interface MutationGuardOptions {
   onStorageError?: (error: StorageError) => void;
 }
 
-export interface MutationGuard {
+export interface Orynth {
   define<TInput = unknown, TResult = unknown>(
     options: DefineOptions<TInput, TResult> & { concurrency?: "join" | "reject" | "queue" },
   ): OperationDefinition<TInput, TResult>;
@@ -223,13 +292,22 @@ export interface MutationGuard {
     options: DefineOptions<TInput, TResult>,
   ): OperationDefinition<TInput, TResult | undefined>;
   /**
-   * Loads unresolved operations from storage and reconnects them with their
-   * definitions. Restored operations are `uncertain` and never execute on
-   * their own: call `reconcile()`, or `retry()` once resubmission is known to
-   * be safe. Deletes expired records. Records whose definition has not been
-   * defined yet are left in storage.
+   * Returns the current scope's operations that need recovery: unresolved
+   * records loaded from storage and reconnected with their definitions, plus
+   * `uncertain` operations this instance already tracks. Operations that are
+   * running are not returned. Restored operations are `uncertain` and never
+   * execute on their own: call `reconcile()`, or `retry()` once resubmission is
+   * known to be safe. Expired operations are returned too; they can be
+   * reconciled but not resent, so `discard()` them once handled. Records whose
+   * definition has not been defined yet are left in storage.
    */
   restore(): Promise<Operation[]>;
+  /**
+   * Discards every operation and deletes every stored record, in all scopes.
+   * Call it on sign-out. Operations that are running, in this tab or another,
+   * are left to finish.
+   */
+  clear(): Promise<void>;
 }
 
 /** A failure as stored in an operation record. */
@@ -247,20 +325,32 @@ export interface OperationRecord {
   attempts: number;
   createdAt: number;
   updatedAt: number;
-  /** Epoch milliseconds after which the record may be deleted. Absent means never. */
+  /** Epoch milliseconds after which the record may be deleted. Absent or `null` means never. */
   expiresAt?: number;
-  /** Present only when the definition sets `persistInput: true`. */
+  /** Changes on every write, so instances can tell when another tab changed the record. */
+  revision: string;
+  /** The instance's scope when the operation was created. Absent or `null` means none. */
+  scope?: string;
+  /**
+   * The tab sending the operation, and until when other tabs must leave it
+   * alone. `locks` if that tab holds the operation's Web Lock, which tabs with
+   * Web Locks wait for instead.
+   */
+  lease?: { owner: string; until: number; locks?: boolean };
+  /** Present only when the definition sets `persistInput: true`. `null` counts as absent. */
   input?: unknown;
   error?: SerializedError;
 }
 
 /**
- * Persistence for operation records. Methods may reject; the guard wraps
+ * Persistence for operation records. Methods may reject; the instance wraps
  * failures in `StorageError`.
  */
 export interface OperationStorage {
   /** Inserts or replaces the record with the same `id`. */
   set(record: OperationRecord): Promise<void>;
+  /** Returns the record with this `id`, or `undefined`. */
+  get(id: string): Promise<OperationRecord | undefined>;
   /** Deletes the record. Resolves even if it does not exist. */
   delete(id: string): Promise<void>;
   /** Returns every stored record. */
