@@ -571,6 +571,20 @@ describe("persisted inputs", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("refuses FormData where structuredClone copies it into a plain object (React Native)", async () => {
+    // Hermes clones React Native's JavaScript FormData into `{ _parts: [...] }`, which couldn't be sent again.
+    vi.stubGlobal("structuredClone", (value: unknown) => ({ ...(value as object) }));
+    try {
+      const execute = vi.fn(async () => "ok");
+      const define = (name: string) => createOrynth().define({ name, persistInput: true, execute });
+      await expect(define("top").create(new FormData()).run()).rejects.toBeInstanceOf(StorageError);
+      await expect(define("nested").create({ upload: { form: new FormData() } }).run()).rejects.toBeInstanceOf(StorageError);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("copies proxies part by part, keeping their Maps and Dates", async () => {
     const storage = memoryStorage();
     // Like Vue's reactive collections, whose methods run on the original.

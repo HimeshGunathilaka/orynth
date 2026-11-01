@@ -31,6 +31,7 @@ The default classifier, `isUncertainError`, treats these as **uncertain**:
 - Axios errors without a response, and runtime messages such as "Network connection lost" (Cloudflare Workers)
 - HTTP **408** and **5xx** (a 500 may arrive after the server committed), and status **0**, which XHR-based clients such as Angular's `HttpClient` use for network failures
 - HTTP **409**, which the [IETF Idempotency-Key draft](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/) uses for "a request with this key is still being processed"
+- errors from Expo's `fetch`, the global `fetch` in Expo apps and so also under Ky and ofetch there: plain `Error`s whose message starts with `fetch failed:`, for network failures and aborts alike ([React Native](react-native.md#errors-from-expos-fetch))
 - an error carrying a **2xx** status, when its transport error is uncertain: the server accepted the request and the failure came after it. Axios in Node reports a body cut off after the status as `ERR_BAD_RESPONSE`, which is uncertain. An error for a complete 2xx response, such as a GraphQL error, is still a failure
 - an `OperationUncertainError` from a guarded operation called inside `execute`
 

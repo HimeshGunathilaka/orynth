@@ -2,6 +2,19 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+Fixed, found by running Orynth in React Native Release builds on iOS and Android:
+
+- Errors from Expo's `fetch` are uncertain. Expo installs it as the global `fetch`, so Ky and ofetch use it too, and it reports network failures and aborts as plain `Error`s whose message starts with `fetch failed:`. 1.1 classified them as definitive failures, so a lost confirmation told the customer the order wasn't placed and deleted its recovery record.
+- A persisted input restored from JSON-backed storage matches the input it was stored from: a `Date` equals its ISO string, and `undefined` properties are ignored. In 1.1, `getOrCreate()` threw `OperationConflictError` for the same form after a restart with such an adapter (localStorage, AsyncStorage, MMKV, SQLite rows).
+- `persistInput` refuses `FormData` and `URLSearchParams` anywhere in the input on every platform. In React Native, `structuredClone` copied them into plain objects that a restored operation would have sent instead.
+
+Added:
+
+- A React Native guide: an Expo SQLite storage adapter, random IDs without `crypto`, Expo's `fetch` errors, requests the platform resends on its own, and backgrounding.
+- The Axios and ofetch recipes parse JSON strictly, so a response body cut off mid-stream is uncertain instead of resolving with partial text. React Native on iOS delivered such a body as complete.
+
 ## 1.1.0
 
 Added:

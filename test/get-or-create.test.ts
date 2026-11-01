@@ -122,6 +122,28 @@ describe("getOrCreate", () => {
     expect(backend.orders.size).toBe(1);
   });
 
+  it("finds the restored operation when a JSON-backed store turned its Date into a string and dropped undefined fields", async () => {
+    // Like the docs' localStorage adapter, or AsyncStorage, MMKV and SQLite rows in React Native.
+    const rows = new Map<string, string>();
+    const storage: OperationStorage = {
+      set: async (record) => void rows.set(record.id, JSON.stringify(record)),
+      get: async (id) => (rows.has(id) ? JSON.parse(rows.get(id)!) : undefined),
+      delete: async (id) => void rows.delete(id),
+      list: async () => [...rows.values()].map((row) => JSON.parse(row)),
+    };
+    const form = () => ({ productId: "123", quantity: 1, deliverOn: new Date("2026-12-24T00:00:00.000Z"), coupon: undefined });
+    const backend = orderBackend();
+    backend.dropNextResponse();
+    const before = createOrynth({ storage }).define({ name: "create-order", persistInput: true, execute: ({ input, idempotencyKey }: ExecuteContext<ReturnType<typeof form>>) => backend.createOrder(input, idempotencyKey) });
+    await expect(before.getOrCreate("checkout-1", form()).run()).rejects.toBeInstanceOf(OperationUncertainError);
+
+    const after = createOrynth({ storage }).define({ name: "create-order", persistInput: true, execute: async () => backend.orders.get("checkout-1")! });
+    const [restored] = await after.restore();
+    expect(restored!.input).toEqual({ productId: "123", quantity: 1, deliverOn: "2026-12-24T00:00:00.000Z" });
+    expect(after.getOrCreate("checkout-1", form())).toBe(restored);
+    expect(() => after.getOrCreate("checkout-1", { ...form(), deliverOn: new Date("2026-12-25T00:00:00.000Z") })).toThrow(OperationConflictError);
+  });
+
   it("returns a restored operation whose input was not persisted: there is nothing to compare", async () => {
     const storage = memoryStorage();
     const backend = orderBackend();

@@ -47,7 +47,7 @@ The demo uses a real SQLite database and closes the connection after the order c
 npm install orynth
 ```
 
-Orynth has no runtime dependencies. It works with your existing HTTP client and ships TypeScript declarations for both ESM and CommonJS. The library supports Node.js 20+ and modern browsers.
+Orynth has no runtime dependencies. It works with your existing HTTP client and ships TypeScript declarations for both ESM and CommonJS. The library supports Node.js 20+, modern browsers and React Native.
 
 Define a write and a way to look up its outcome. This browser example uses Axios with a timeout. Recipes for native `fetch`, Axios, Ky and ofetch are each tested against the same lost response: [HTTP clients](docs/http-clients.md).
 
@@ -110,6 +110,7 @@ Show the receipt on `succeeded`. If the lookup returns `pending`, `unknown`, or 
 | Prevent duplicate submissions or recover an order after a reload | [Recipes](docs/recipes.md) |
 | Drive the button with TanStack Query's `useMutation` | [Recipes](docs/recipes.md#compose-with-tanstack-query) |
 | Use fetch, Axios, Ky or ofetch, and decide which layer retries | [HTTP clients](docs/http-clients.md) |
+| Use Orynth in a React Native or Expo app | [React Native](docs/react-native.md) |
 | Look up what `getOrCreate()` returns, or subscribe to state changes | [Operations](docs/operations.md) |
 | Recover after a reload or isolate users on a shared device | [Persistence and account scopes](docs/persistence.md) |
 | Coordinate a checkout across browser tabs | [Web Locks and leases](docs/multiple-tabs.md) |

@@ -73,6 +73,9 @@ function transportVerdict(error: Bag): boolean | undefined {
   // How `Response.json()` reports a body it can't parse: a response arrived, so the request was processed.
   if (name === "SyntaxError") return true;
   if (typeof message === "string" && NETWORK_MESSAGES.has(message)) return true;
+  // Expo's fetch, the global `fetch` in Expo apps, reports every network failure and abort as a plain
+  // Error "fetch failed: <native message>", with no code; the native message is localized.
+  if (typeof message === "string" && message.startsWith("fetch failed: ")) return true;
   // An Axios error without a response: the request was sent but no answer arrived.
   if (error.isAxiosError === true && error.response === undefined) return true;
   // Axios couldn't read a response the server sent, e.g. the connection dropped mid-body (Node).
@@ -89,7 +92,8 @@ function transportVerdict(error: Bag): boolean | undefined {
  * parse), dropped or timed-out connections, aborted requests, and HTTP 408,
  * 409 (under the IETF Idempotency-Key draft: a request with the same key is
  * still being processed), 5xx or 0 (how XHR-based clients report network
- * failures). Returns `false` for other HTTP statuses, for connections that
+ * failures), and Expo's `fetch` errors (`fetch failed: …`, plain `Error`s).
+ * Returns `false` for other HTTP statuses, for connections that
  * were never established, and for errors it does not recognize, which are
  * treated as definitive failures. A 2xx status on an error means the server
  * accepted the request, so the transport error decides, e.g. a body cut off

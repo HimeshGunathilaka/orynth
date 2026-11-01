@@ -47,7 +47,7 @@ const recipes: Record<string, Recipe> = {
   }),
 
   axios: (baseUrl, timeout) => {
-    const api = axios.create({ baseURL: baseUrl, timeout });
+    const api = axios.create({ baseURL: baseUrl, timeout, responseType: "json", transitional: { silentJSONParsing: false } });
     return {
       execute: async ({ input, headers }) => (await api.post<Order>("/orders", input, { headers })).data,
       reconcile: async ({ idempotencyKey }) =>
@@ -66,7 +66,7 @@ const recipes: Record<string, Recipe> = {
   },
 
   ofetch: (baseUrl, timeout) => {
-    const api = ofetch.create({ baseURL: baseUrl, timeout });
+    const api = ofetch.create({ baseURL: baseUrl, timeout, parseResponse: JSON.parse });
     return {
       // ofetch doesn't retry POST by default; `retry: 0` keeps it that way if the instance's defaults change.
       execute: ({ input, headers }) => api<Order>("/orders", { method: "POST", body: input, headers, retry: 0 }),

@@ -129,16 +129,19 @@ function fingerprint(input: unknown): string | undefined {
       return `${tag}(${JSON.stringify(value.toString())})`;
     }
     if (Array.isArray(value)) return `[${Array.from(value, describe).join(",")}]`;
-    // What JSON would send for it, e.g. a Date's ISO string.
+    // What JSON would send for it, e.g. a Date's ISO string: equal to the string a JSON-backed store restores.
     const { toJSON } = value as { toJSON?: unknown };
-    if (typeof toJSON === "function") return `${tag}(${describe(toJSON.call(value))})`;
+    if (typeof toJSON === "function") return describe(toJSON.call(value));
     // Own properties in a stable order, including non-enumerable data properties `execute` may read.
     const properties: string[] = [];
     for (const key of Object.getOwnPropertyNames(value).sort()) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       // Hidden getters are left alone: reading them may have effects.
-      if (descriptor?.enumerable) properties.push(`${JSON.stringify(key)}:${describe((value as Record<string, unknown>)[key])}`);
-      else if (descriptor && "value" in descriptor) properties.push(`${JSON.stringify(key)}:${describe(descriptor.value)}`);
+      if (descriptor?.enumerable) {
+        const item = (value as Record<string, unknown>)[key];
+        // Like JSON, which a store may restore the input through, `{ a: undefined }` equals `{}`.
+        if (item !== undefined) properties.push(`${JSON.stringify(key)}:${describe(item)}`);
+      } else if (descriptor && "value" in descriptor) properties.push(`${JSON.stringify(key)}:${describe(descriptor.value)}`);
     }
     return `{${properties.join(",")}}`;
   };
@@ -149,8 +152,29 @@ function fingerprint(input: unknown): string | undefined {
   }
 }
 
+/** Whether a value holds a `FormData` or `URLSearchParams`, anywhere. */
+function containsForm(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value !== "object" || value === null || seen.has(value)) return false;
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return false;
+  seen.add(value);
+  if (typeof FormData !== "undefined" && value instanceof FormData) return true;
+  if (typeof URLSearchParams !== "undefined" && value instanceof URLSearchParams) return true;
+  let items: Iterable<unknown> = Object.values(value);
+  if (value instanceof Map) items = [...value.keys(), ...value.values()];
+  else if (value instanceof Set) items = value;
+  for (const item of items) if (containsForm(item, seen)) return true;
+  return false;
+}
+
+/** A storable copy of an input as it is now, or a TypeError for one that can't be stored as it is. */
+function storableCopy(input: unknown): unknown {
+  // Browsers refuse to clone these, but React Native's FormData clones into a plain object that can't be sent again.
+  if (containsForm(input)) throw new TypeError("A FormData or URLSearchParams can't be stored; store plain data instead");
+  return toPlainData(input);
+}
+
 /**
- * A storable copy of an input as it is now. Proxies (Vue `reactive`, MobX)
+ * A storable copy of a value as it is now. Proxies (Vue `reactive`, MobX)
  * can't be structured-cloned, so they are copied part by part. Throws for
  * values that can't be stored as they are, such as functions and `FormData`.
  */
@@ -524,7 +548,7 @@ export class OperationHandle<TInput, TResult> implements Operation<TInput, TResu
     this.#sent = fingerprint(input);
     if (!this.#config.persistInput) return;
     try {
-      this.#persisted = { value: toPlainData(input) };
+      this.#persisted = { value: storableCopy(input) };
     } catch (cause) {
       this.#persisted = undefined;
       this.#storageFailed(new StorageError(`The input of operation ${this.id} can't be stored`, this.id, cause));

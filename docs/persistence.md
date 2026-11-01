@@ -103,7 +103,7 @@ interface OperationStorage {
 
 Records are plain, structured-cloneable objects (`OperationRecord`). Store every field, including `revision` (how other tabs' changes are detected), `scope` and `lease`. Resolve `set` only once the record is durable, because the request is sent right after, and have `get` return the latest record. The instance serializes writes per operation, waits for its own writes before reading, and wraps adapter errors in `StorageError`. Missing values may come back as `null`; an `input` of `null` counts as not persisted. `restore()` reports records with an invalid shape to `onStorageError` (by ID only, never their contents) and skips them, for example an `expiresAt` that isn't a number or `attempts` below 1. If `onStorageError` throws, the error is reported and the other records are still restored.
 
-If you serialize to JSON, note that an `input` of `undefined` is dropped, so such an operation can't be retried after a restore. For example, a `localStorage` adapter:
+If you serialize to JSON, note that an `input` of `undefined` is dropped, so such an operation can't be retried after a restore. Inside an input, JSON turns `Date`s into strings and drops `undefined` properties; Orynth compares inputs by what JSON would send, so `getOrCreate()` still recognizes the restored input. React Native apps need an adapter like this: see [React Native](react-native.md#storage) for one on Expo SQLite. For example, a `localStorage` adapter:
 
 ```ts
 import type { OperationRecord, OperationStorage } from "orynth";

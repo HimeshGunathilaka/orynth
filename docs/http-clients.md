@@ -15,6 +15,8 @@ One layer should resend a write. Orynth's [retry policy](retries.md) checks the 
 
 Status lookups in `reconcile` are reads, so client retries there are fine.
 
+Below the client, the platform can resend too. Chromium and Firefox resend a POST whose reused connection closed, and so does Android's HTTP stack under Expo's `fetch` ([React Native](react-native.md#the-platform-resends-on-its-own)). That's one more reason the backend must honor the key.
+
 ## Tested with your client
 
 Each recipe below runs this release test against a local order API that honors idempotency keys ([`test/clients.test.ts`](../test/clients.test.ts), in CI on Node.js 22, 24 and 26):
@@ -31,6 +33,8 @@ Each recipe below runs this release test against a local order API that honors i
 ¹ Axios in Node reports a cut-off body as `ERR_BAD_RESPONSE` with the 201 attached. Orynth 1.0 classified it as a failure; 1.1 classifies it as uncertain.
 
 The same file checks the other half of the retry table: with retries switched on for POST, Ky and ofetch resend a dropped request with the same key inside one Orynth attempt.
+
+The same recipes were also run in Release builds of a React Native app on iOS and Android: see [React Native](react-native.md).
 
 ## Fetch
 
@@ -68,7 +72,13 @@ const createOrder = orynth.define({
 No adapter or interceptor needed. Axios throws for non-2xx statuses, and Orynth reads `error.response.status`:
 
 ```ts
-const api = axios.create({ baseURL: "/api", timeout: 10_000 });
+const api = axios.create({
+  baseURL: "/api",
+  timeout: 10_000,
+  // Strict JSON: a body cut off mid-response throws instead of resolving with partial text.
+  responseType: "json",
+  transitional: { silentJSONParsing: false },
+});
 
 const createOrder = orynth.define({
   name: "create-order",
@@ -79,7 +89,7 @@ const createOrder = orynth.define({
 });
 ```
 
-4xx responses are failures. Timeouts, dropped connections, bodies cut off mid-stream and 5xx responses are uncertain.
+4xx responses are failures. Timeouts, dropped connections, bodies cut off mid-stream and 5xx responses are uncertain. Keep `silentJSONParsing: false`: by default Axios returns a body it can't parse as text, so when a response is cut off but delivered as complete, as React Native on iOS does, the operation would succeed with a fragment as its result.
 
 ## Ky
 
@@ -105,7 +115,8 @@ Ky separates HTTP errors from network errors, and Orynth follows both. `HTTPErro
 ```ts
 import { ofetch } from "ofetch";
 
-const api = ofetch.create({ baseURL: "/api", timeout: 10_000 });
+// Strict JSON: ofetch's default parser returns a body it can't parse as text, e.g. one cut off mid-response.
+const api = ofetch.create({ baseURL: "/api", timeout: 10_000, parseResponse: JSON.parse });
 
 const createOrder = orynth.define({
   name: "create-order",

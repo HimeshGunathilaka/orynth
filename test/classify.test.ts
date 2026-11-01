@@ -40,6 +40,16 @@ describe("isUncertainError", () => {
     ],
     ["a success status wrapping a dropped connection", Object.assign(new Error("read failed", { cause: connectionReset() }), { status: 201 })],
     ["a network error (Ky)", Object.assign(new Error("Request failed due to a network error"), { name: "NetworkError", cause: new TypeError("Failed to fetch") })],
+    // Expo SDK 58's global fetch on iOS, as seen on a simulator: plain Errors, abort reasons dropped.
+    ["a dropped connection (Expo's fetch)", new Error("fetch failed: The network connection was lost.")],
+    ["an aborted or timed-out request (Expo's fetch)", new Error("fetch failed: Fetch request has been canceled")],
+    [
+      "ofetch on Expo's fetch",
+      Object.assign(new Error('[POST] "/api/orders": <no response> fetch failed: The network connection was lost.'), {
+        name: "FetchError",
+        cause: new Error("fetch failed: The network connection was lost."),
+      }),
+    ],
   ])("uncertain: %s", (_, error) => {
     expect(isUncertainError(error)).toBe(true);
   });
