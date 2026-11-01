@@ -12,4 +12,6 @@ Retry libraries such as `p-retry` or `axios-retry` run a function again until it
 | Retry after the backend forgot the key | Creates a duplicate | Refused (`IdempotencyKeyExpiredError`) |
 | "Did it actually happen?" | Not addressed | `reconcile()` asks your backend |
 
+HTTP clients with built-in retries, such as Ky and ofetch, are retry libraries for this purpose. Leave their retries off for writes: [Who owns retries](http-clients.md#who-owns-retries).
+
 Orynth is not an HTTP client and not server middleware. You keep your HTTP client and state management, and your backend remains the source of truth.

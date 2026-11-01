@@ -44,8 +44,7 @@ const restored = createOrder.restore();
 
 export async function placeOrder(checkoutId: string, input: OrderInput): Promise<Order | undefined> {
   await restored;
-  const operation = createOrder.get(checkoutId) ??
-    createOrder.create(input, { id: checkoutId, idempotencyKey: checkoutId });
+  const operation = createOrder.getOrCreate(checkoutId, input);
   try {
     return await operation.run();
   } catch (error) {
@@ -62,7 +61,7 @@ export async function placeOrder(checkoutId: string, input: OrderInput): Promise
 
 What happens:
 
-1. `create()` assigns the checkout ID `b1e2…` as both ID and key. `run()` saves a `pending` record to IndexedDB, then sends `POST /api/orders` with `Idempotency-Key: b1e2…`.
+1. `getOrCreate()` creates the operation with the checkout ID `b1e2…` as both ID and key. `run()` saves a `pending` record to IndexedDB, then sends `POST /api/orders` with `Idempotency-Key: b1e2…`.
 2. The server creates order `order-1`. The connection drops before the response arrives, so `fetch` throws `TypeError: Failed to fetch`.
 3. The operation becomes `uncertain`, not `failed`, and `run()` rejects with `OperationUncertainError`. The app does not tell the user the order failed.
 4. `reconcile()` calls `GET /api/orders/by-key/b1e2…`, which returns `order-1`. The operation becomes `succeeded` with `result: order-1`, and its record is deleted. One order exists.

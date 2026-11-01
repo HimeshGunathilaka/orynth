@@ -41,8 +41,10 @@ src/
   types.ts          public types
   storage/          memoryStorage() and indexedDBStorage()
 test/
-  *.test.ts         unit, HTTP (fetch and Axios against a local server), IndexedDB
-                    (fake-indexeddb), cross-tab and regression tests
+  *.test.ts         unit, HTTP (fetch, Axios, Ky and ofetch against a local server),
+                    IndexedDB (fake-indexeddb), cross-tab and regression tests
+  clients.test.ts   the release test for every client in docs/http-clients.md: its
+                    recipes are copied there, so change both together
   helpers.ts        fault-injection helpers: dropped connections, failing storage, deferreds
   server.ts         a local order API that honors idempotency keys like the IETF draft
   setup/no-locks.ts removes navigator.locks for the second test run

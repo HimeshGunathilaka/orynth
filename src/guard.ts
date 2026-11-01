@@ -1,5 +1,5 @@
 import { isUncertainError } from "./classify.js";
-import { OrynthError, OperationInProgressError, StorageError } from "./errors.js";
+import { OrynthError, OperationConflictError, OperationInProgressError, StorageError } from "./errors.js";
 import { generateId } from "./id.js";
 import { OperationHandle, reportError, withLock, type GuardContext, type OperationConfig } from "./operation.js";
 import { isLive, restoreOperations, restoredState, type Hydrate } from "./recovery.js";
@@ -9,6 +9,7 @@ import { memoryStorage } from "./storage/memory.js";
 import type {
   CreateOptions,
   DefineOptions,
+  GetOrCreateOptions,
   LockManagerLike,
   Orynth,
   OrynthOptions,
@@ -126,34 +127,58 @@ export function createOrynth(options: OrynthOptions = {}): Orynth {
       return new OperationHandle(config, restoredState(record) as OperationState<TResult>, input, record.revision, {});
     });
 
+    function create(input?: TInput, { id = generateId(), idempotencyKey, expiresAt }: CreateOptions = {}) {
+      assertString("id", id);
+      if (idempotencyKey !== undefined) assertString("idempotencyKey", idempotencyKey);
+      if (expiresAt !== undefined) assertTimestamp("expiresAt", expiresAt);
+      if (registry.get(id)) throw new OrynthError(`An operation with ID ${id} is already active`);
+      const now = Date.now();
+      const state: OperationState<TResult> = {
+        id,
+        name,
+        idempotencyKey: idempotencyKey ?? generateId(),
+        status: "created",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+        scope: context.scope(),
+      };
+      // A key the app chose may have been sent before, by another operation.
+      const key = idempotencyKey === undefined ? undefined : { expiresAt };
+      return new OperationHandle(config, state, { value: input as TInput }, undefined, key);
+    }
+
+    function get(id: string) {
+      const operation = registry.get(id);
+      return operation?.name === name && operation.state.scope === context.scope()
+        ? (operation as OperationHandle<TInput, TResult>)
+        : undefined;
+    }
+
+    function getOrCreate(id: string, input?: TInput, { idempotencyKey, expiresAt }: GetOrCreateOptions = {}) {
+      assertString("id", id);
+      if (idempotencyKey !== undefined) assertString("idempotencyKey", idempotencyKey);
+      if (expiresAt !== undefined) assertTimestamp("expiresAt", expiresAt);
+      const tracked = get(id);
+      if (!tracked) return create(input, { id, idempotencyKey: idempotencyKey ?? id, expiresAt });
+      // Joining would hand the caller an operation for something other than what it asked for.
+      if (idempotencyKey !== undefined && idempotencyKey !== tracked.idempotencyKey) {
+        throw new OperationConflictError(id, `Operation ${id} is tracked with another idempotency key`);
+      }
+      if (tracked.differsFrom(input as TInput)) {
+        throw new OperationConflictError(
+          id,
+          `Operation ${id} is tracked with different input; use a new ID for the new input`,
+        );
+      }
+      return tracked;
+    }
+
     return {
       name,
-      create(input?: TInput, { id = generateId(), idempotencyKey, expiresAt }: CreateOptions = {}) {
-        assertString("id", id);
-        if (idempotencyKey !== undefined) assertString("idempotencyKey", idempotencyKey);
-        if (expiresAt !== undefined) assertTimestamp("expiresAt", expiresAt);
-        if (registry.get(id)) throw new OrynthError(`An operation with ID ${id} is already active`);
-        const now = Date.now();
-        const state: OperationState<TResult> = {
-          id,
-          name,
-          idempotencyKey: idempotencyKey ?? generateId(),
-          status: "created",
-          attempts: 0,
-          createdAt: now,
-          updatedAt: now,
-          scope: context.scope(),
-        };
-        // A key the app chose may have been sent before, by another operation.
-        const key = idempotencyKey === undefined ? undefined : { expiresAt };
-        return new OperationHandle(config, state, { value: input as TInput }, undefined, key);
-      },
-      get(id: string) {
-        const operation = registry.get(id);
-        return operation?.name === name && operation.state.scope === context.scope()
-          ? (operation as Operation<TInput, TResult>)
-          : undefined;
-      },
+      create,
+      get,
+      getOrCreate,
       restore: () => restore(name) as Promise<Operation<TInput, TResult>[]>,
     };
   }

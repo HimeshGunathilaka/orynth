@@ -91,4 +91,24 @@ describe("type inference", () => {
   it("returns untyped operations from guard.restore()", () => {
     expectTypeOf(guard.restore).returns.toEqualTypeOf<Promise<Operation[]>>();
   });
+
+  it("types getOrCreate like create, with the ID first", () => {
+    const createOrder = guard.define<OrderInput, Order>({ name: "get-or-create", execute: async () => ({ id: "1" }) });
+    expectTypeOf(createOrder.getOrCreate("checkout-1", { productId: "1", quantity: 1 })).toEqualTypeOf<
+      Operation<OrderInput, Order>
+    >();
+    createOrder.getOrCreate("checkout-2", { productId: "1", quantity: 1 }, { idempotencyKey: "k", expiresAt: 1 });
+    // Not called: these would throw at runtime.
+    void (() => {
+      // @ts-expect-error input is required
+      createOrder.getOrCreate("checkout-1");
+      // @ts-expect-error the ID can't be generated: it identifies the intent
+      createOrder.getOrCreate({ productId: "1", quantity: 1 });
+      // @ts-expect-error getOrCreate takes no ID option
+      createOrder.getOrCreate("checkout-1", { productId: "1", quantity: 1 }, { id: "other" });
+    });
+
+    const ping = guard.define({ name: "get-or-create-no-input", execute: async () => "pong" });
+    expectTypeOf(ping.getOrCreate("ping-1").run).returns.toEqualTypeOf<Promise<string>>();
+  });
 });

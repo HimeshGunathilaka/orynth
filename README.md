@@ -49,7 +49,7 @@ npm install orynth
 
 Orynth has no runtime dependencies. It works with your existing HTTP client and ships TypeScript declarations for both ESM and CommonJS. The library supports Node.js 20+ and modern browsers.
 
-Define a write and a way to look up its outcome. This browser example uses Axios with a timeout. The demo uses native `fetch`. [HTTP client examples](docs/http-clients.md).
+Define a write and a way to look up its outcome. This browser example uses Axios with a timeout. Recipes for native `fetch`, Axios, Ky and ofetch are each tested against the same lost response: [HTTP clients](docs/http-clients.md).
 
 ```ts
 import axios from "axios";
@@ -77,15 +77,14 @@ const orders = orynth.define<Items, Order>({
 });
 ```
 
-Restore outstanding checkouts at startup. In the submit handler, use a checkout ID that survives a reload. Two clicks on the same checkout then share an operation. A deliberate second purchase gets a fresh ID.
+Restore outstanding checkouts at startup. In the submit handler, call `getOrCreate()` with a checkout ID that survives a reload. Every click, component and reload of that checkout then shares one operation and one idempotency key, and a changed quantity throws `OperationConflictError` instead of joining the old order. A deliberate second purchase gets a fresh ID.
 
 ```ts
 const restored = orders.restore();
 
 async function placeOrder(checkoutId: string, items: Items): Promise<ReconcileResult<Order>> {
   await restored;
-  const order = orders.get(checkoutId) ??
-    orders.create(items, { id: checkoutId, idempotencyKey: checkoutId });
+  const order = orders.getOrCreate(checkoutId, items);
 
   try {
     return { status: "succeeded", result: await order.run() };
@@ -108,7 +107,10 @@ Show the receipt on `succeeded`. If the lookup returns `pending`, `unknown`, or 
 
 | When you need to… | Read |
 | --- | --- |
-| Handle double clicks or subscribe to state changes | [Operations](docs/operations.md) |
+| Prevent duplicate submissions or recover an order after a reload | [Recipes](docs/recipes.md) |
+| Drive the button with TanStack Query's `useMutation` | [Recipes](docs/recipes.md#compose-with-tanstack-query) |
+| Use fetch, Axios, Ky or ofetch, and decide which layer retries | [HTTP clients](docs/http-clients.md) |
+| Look up what `getOrCreate()` returns, or subscribe to state changes | [Operations](docs/operations.md) |
 | Recover after a reload or isolate users on a shared device | [Persistence and account scopes](docs/persistence.md) |
 | Coordinate a checkout across browser tabs | [Web Locks and leases](docs/multiple-tabs.md) |
 | Decide whether a retry library is enough | [Comparison with retry libraries](docs/retry-libraries.md) |

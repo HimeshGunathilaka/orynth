@@ -44,6 +44,7 @@ Returns a `Orynth`:
 ## `OperationDefinition`
 
 - **`definition.create(input?, { id?, idempotencyKey?, expiresAt? }?)`** → `Operation`. Starts a new logical operation in the current scope. The instance keeps one handle per ID while that ID is tracked: `create()` throws if the ID belongs to an operation that is executing, unresolved or restored, and of two handles created with the same ID only one can run at a time. Running an operation whose ID is already in storage rejects with `OperationConflictError`. IDs don't prevent duplicates over time; idempotency keys do. `expiresAt` is for a custom key that may have been sent before: when the backend forgets it (epoch milliseconds). It applies while it's in the future; the operation's own expiry is then the earlier of it and `ttl` after its first request.
+- **`definition.getOrCreate(id, input?, { idempotencyKey?, expiresAt? }?)`** → `Operation`. The operation of this definition tracked under `id` in the current scope (in flight, unresolved or restored), or a new one with that ID and, by default, the ID as its idempotency key. Throws `OperationConflictError` if the tracked operation has different input (compared with the input as first sent) or, when `idempotencyKey` is given, another key. A restored operation without a persisted input is returned as it is. The options apply when it creates the operation. See [Double clicks and user intent](operations.md#double-clicks-and-user-intent).
 - **`definition.get(id)`** → `Operation | undefined`. The operation of this definition, in the current scope, that the instance is running or tracking under that ID.
 - **`definition.restore()`** → `Promise<Operation[]>`. Like `orynth.restore()`, for this definition only.
 
@@ -68,7 +69,7 @@ All extend `OrynthError`. `instanceof` works even when an app ends up with two c
 | --- | --- |
 | `OperationUncertainError` | `run()`/`retry()` ended with an unknown outcome (including a definitive error after an earlier unknown one), or `run()` on an uncertain operation. `cause` is the latest error. |
 | `OperationInProgressError` | Duplicate call with `concurrency: "reject"`, `reconcile()` or `discard()` during a request, or another tab held the operation longer than `lockTimeout` |
-| `OperationConflictError` | Another tab or instance changed the stored operation or is sending it, or its ID is already stored. Nothing was sent. `operationId` |
+| `OperationConflictError` | Another tab or instance changed the stored operation or is sending it, or its ID is already stored. Nothing was sent. Also thrown by `getOrCreate()` for an ID tracked with other input or another key. `operationId` |
 | `IdempotencyKeyExpiredError` | Resending after the key expired. Nothing was sent. `operationId`, `expiresAt` |
 | `StorageError` | Storage failed. `operationId`, `cause` |
 | `OrynthError` | Also on its own: an operation that was discarded, belongs to another scope, has no persisted input to retry, or whose input changed after it was sent (or can't be compared, or kept changing while it was being stored) |
@@ -81,4 +82,4 @@ Invalid options throw `TypeError` or `RangeError` from `createOrynth()`, `define
 - **`isUncertainError(error)`**: the default classifier.
 - **`memoryStorage()`**: in-memory storage (from `orynth` or `orynth/storage`).
 - **`indexedDBStorage({ databaseName?, indexedDB? })`**: from `orynth/storage`. `indexedDB` accepts a custom `IDBFactory`, for example `fake-indexeddb` in tests. Its types don't need the DOM library, so Node projects can import the module.
-- Types: `Operation`, `OperationDefinition`, `OperationState`, `OperationStatus`, `ExecuteContext`, `ReconcileContext`, `ReconcileResult`, `RetryOptions`, `ReconcileOptions`, `OperationStorage`, `OperationRecord`, `LockManagerLike`, and more.
+- Types: `Operation`, `OperationDefinition`, `OperationState`, `OperationStatus`, `ExecuteContext`, `ReconcileContext`, `ReconcileResult`, `RetryOptions`, `ReconcileOptions`, `CreateOptions`, `GetOrCreateOptions`, `OperationStorage`, `OperationRecord`, `LockManagerLike`, and more.

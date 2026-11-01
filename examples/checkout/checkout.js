@@ -53,7 +53,7 @@ async function start() {
   el("place").onclick = async () => {
     display(null, "Sending order…");
     try {
-      operation = orders.get(checkout) ?? orders.create({ quantity: 1 }, { id: checkout, idempotencyKey: checkout });
+      operation = orders.getOrCreate(checkout, { quantity: 1 });
       confirm(await operation.run());
     } catch (error) {
       if (error instanceof OperationUncertainError) display("recover", "Confirmation lost. Check the order or reload this page.");

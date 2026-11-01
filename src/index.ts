@@ -16,6 +16,7 @@ export type {
   CreateOptions,
   DefineOptions,
   ExecuteContext,
+  GetOrCreateOptions,
   LockManagerLike,
   Orynth,
   OrynthOptions,

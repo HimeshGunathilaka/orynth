@@ -34,6 +34,12 @@ describe("isUncertainError", () => {
     ["a GraphQL error wrapping a timeout", { originalError: new DOMException("timed out", "TimeoutError") }],
     ["a dropped connection (Cloudflare Workers)", new Error("Network connection lost")],
     ["a legacy XHR network error", new DOMException("A network error occurred.", "NetworkError")],
+    [
+      "a body cut off after a success status (Axios in Node)",
+      { isAxiosError: true, code: "ERR_BAD_RESPONSE", message: "stream has been aborted", response: { status: 201 } },
+    ],
+    ["a success status wrapping a dropped connection", Object.assign(new Error("read failed", { cause: connectionReset() }), { status: 201 })],
+    ["a network error (Ky)", Object.assign(new Error("Request failed due to a network error"), { name: "NetworkError", cause: new TypeError("Failed to fetch") })],
   ])("uncertain: %s", (_, error) => {
     expect(isUncertainError(error)).toBe(true);
   });
@@ -46,6 +52,8 @@ describe("isUncertainError", () => {
     ["HTTP 422 (Axios)", { isAxiosError: true, response: { status: 422 }, code: "ERR_BAD_REQUEST" }],
     ["HTTP 429", new HttpError(429)],
     ["an application error", new Error("Order creation failed")],
+    ["an error for a complete 200 response (a urql GraphQL error)", { name: "CombinedError", graphQLErrors: [{}], response: { status: 200 } }],
+    ["a refused connection (Ky)", Object.assign(new Error("Request failed due to a network error"), { name: "NetworkError", cause: connectionRefused() })],
     ["a string", "boom"],
     ["undefined", undefined],
   ])("not uncertain: %s", (_, error) => {

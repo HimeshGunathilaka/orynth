@@ -12,7 +12,8 @@ const { indexedDBStorage, memoryStorage } = require("orynth/storage");
         throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
       },
     })
-    .create();
+    .getOrCreate("checkout-1");
+  assert.equal(op.idempotencyKey, "checkout-1");
   await assert.rejects(op.run(), OperationUncertainError);
 
   // Errors from the storage entry are wrapped by the core entry, so instanceof works.

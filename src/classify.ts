@@ -75,6 +75,8 @@ function transportVerdict(error: Bag): boolean | undefined {
   if (typeof message === "string" && NETWORK_MESSAGES.has(message)) return true;
   // An Axios error without a response: the request was sent but no answer arrived.
   if (error.isAxiosError === true && error.response === undefined) return true;
+  // Axios couldn't read a response the server sent, e.g. the connection dropped mid-body (Node).
+  if (error.isAxiosError === true && error.code === "ERR_BAD_RESPONSE") return true;
   return undefined;
 }
 
@@ -89,7 +91,9 @@ function transportVerdict(error: Bag): boolean | undefined {
  * still being processed), 5xx or 0 (how XHR-based clients report network
  * failures). Returns `false` for other HTTP statuses, for connections that
  * were never established, and for errors it does not recognize, which are
- * treated as definitive failures.
+ * treated as definitive failures. A 2xx status on an error means the server
+ * accepted the request, so the transport error decides, e.g. a body cut off
+ * after the status arrived is uncertain.
  *
  * Wrapped errors are followed through `cause`, `networkError` and
  * `originalError`. HTTP statuses are read from `error.status`,
@@ -102,7 +106,10 @@ export function isUncertainError(error: unknown): boolean {
   // An HTTP status is the server's own answer, so it decides.
   for (const e of chain) {
     const status = statusOf(e);
-    if (status !== undefined) return status === 0 || status === 408 || status === 409 || status >= 500;
+    if (status === undefined) continue;
+    // Except a success: the server accepted the request, and what failed came after it, such as reading the body.
+    if (status >= 200 && status < 300) break;
+    return status === 0 || status === 408 || status === 409 || status >= 500;
   }
   // Otherwise the innermost transport error is the most specific, e.g. `ECONNREFUSED` under "fetch failed".
   for (const e of chain.reverse()) {

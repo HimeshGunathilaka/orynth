@@ -299,6 +299,15 @@ export class OperationHandle<TInput, TResult> implements Operation<TInput, TResu
     return this.#input?.value;
   }
 
+  /**
+   * Whether `input` is not what this operation sent, or is about to send. A
+   * restored operation without a persisted input has nothing to compare.
+   */
+  differsFrom(input: TInput): boolean {
+    const own = this.#sent ?? (this.#input && fingerprint(this.#input.value));
+    return own !== undefined && fingerprint(input) !== own;
+  }
+
   run(): Promise<TResult> {
     return this.#schedule("run");
   }

@@ -219,14 +219,46 @@ export interface Operation<TInput = unknown, TResult = unknown> {
   discard(): Promise<void>;
 }
 
+/** Options for `getOrCreate()`. They apply when it creates the operation. */
+export interface GetOrCreateOptions {
+  /**
+   * Default: the operation ID, so the intent's ID reaches the backend as the
+   * key. If the tracked operation has another key, `getOrCreate()` throws
+   * `OperationConflictError`.
+   */
+  idempotencyKey?: string;
+  /** When the backend forgets the key, if it may have been sent before. See `CreateOptions`. */
+  expiresAt?: number;
+}
+
 type CreateArgs<TInput> = undefined extends TInput
   ? [input?: TInput, options?: CreateOptions]
   : [input: TInput, options?: CreateOptions];
+
+type GetOrCreateArgs<TInput> = undefined extends TInput
+  ? [id: string, input?: TInput, options?: GetOrCreateOptions]
+  : [id: string, input: TInput, options?: GetOrCreateOptions];
 
 export interface OperationDefinition<TInput, TResult> {
   readonly name: string;
   /** Starts a new logical operation with a new ID and idempotency key. */
   create(...args: CreateArgs<TInput>): Operation<TInput, TResult>;
+  /**
+   * The operation tracked under `id`, or a new one with that ID and, by
+   * default, the ID as its idempotency key. Give it the ID of the user's
+   * intent, such as a checkout, so every submission of that intent joins one
+   * operation and one key. Call `restore()` first, so an operation from an
+   * earlier page load is found instead of created again.
+   *
+   * - A tracked operation is returned as it is, with its original key: in
+   *   flight, `uncertain` (reconcile it), or restored after a reload.
+   * - Different input for a tracked operation throws `OperationConflictError`:
+   *   a new intent needs a new ID. A restored operation whose input was not
+   *   persisted has nothing to compare, and is returned.
+   * - An ID is tracked until its operation resolves. After that, this creates
+   *   a new operation with the same key, which the backend must recognize.
+   */
+  getOrCreate(...args: GetOrCreateArgs<TInput>): Operation<TInput, TResult>;
   /**
    * The operation of this definition with the given ID that the instance is
    * running or tracking (in flight, unresolved or restored), if any.

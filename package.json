@@ -1,6 +1,6 @@
 {
   "name": "orynth",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Client-side reliability for mutations: stable operation identity, idempotency keys, duplicate-execution protection, controlled retries, and recovery of uncertain outcomes.",
   "keywords": [
     "idempotency",
@@ -12,6 +12,8 @@
     "duplicate-requests",
     "fetch",
     "axios",
+    "ky",
+    "ofetch",
     "indexeddb"
   ],
   "license": "MIT",
@@ -83,6 +85,8 @@
     "@types/node": "^26.6.6",
     "axios": "^1.21.0",
     "fake-indexeddb": "^6.2.7",
+    "ky": "^2.2.0",
+    "ofetch": "^1.5.1",
     "publint": "^0.3.25",
     "tsdown": "^0.23.4",
     "typescript": "^7.0.2",

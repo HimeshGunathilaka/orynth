@@ -2,6 +2,18 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.1.0
+
+Added:
+
+- `definition.getOrCreate(id, input, { idempotencyKey?, expiresAt? })`: the operation tracked under `id` (in flight, uncertain or restored after a reload), or a new one with `id` as both its ID and its idempotency key. Different input for a tracked operation throws `OperationConflictError` instead of joining it; so does an explicit `idempotencyKey` that differs from the tracked operation's. It replaces the `get(id) ?? create(input, { id, idempotencyKey: id })` pattern.
+- Tested recipes for native `fetch`, Axios, Ky and ofetch. Each runs the same release test against a real server: a lost response recovered after a reload with no new request, a 422, `retry()` with the original key, a body cut off mid-stream, a timeout and a refused connection. The HTTP clients guide says which layer owns retries for each client, and how to check that the key reaches the backend.
+- Recipes: preventing duplicate form submissions, recovering a submitted order after a reload, and using Orynth with TanStack Query's `useMutation`.
+
+Fixed:
+
+- `isUncertainError()` no longer treats an error carrying a 2xx status as a definitive failure. The server accepted the request, so the transport error decides. Axios in Node reports a response cut off mid-body as `ERR_BAD_RESPONSE` with the 201 attached, which 1.0 classified as failed, so the app would have reported a placed order as not placed. It is uncertain now.
+
 ## 1.0.0
 
 Initial release.

@@ -9,8 +9,11 @@ import type { AddressInfo } from "node:net";
 
 export type OrderInput = { productId: string; quantity: number };
 export type Order = OrderInput & { id: string };
-/** What the server does with the next POST /orders. */
-export type Behavior = "drop-after-commit" | "slow" | 422 | 429 | 503;
+/**
+ * What the server does with the next POST /orders. `drop-mid-body` sends the
+ * status and headers of a success, then closes the connection during the body.
+ */
+export type Behavior = "drop-after-commit" | "drop-mid-body" | "slow" | 422 | 429 | 503;
 
 export interface ServerOptions {
   /** Honor idempotency keys. Default `true`. */
@@ -65,6 +68,12 @@ export async function startServer(options: ServerOptions = {}) {
       entry.order = { id: `order-${orders.length + 1}`, ...(JSON.parse(body) as OrderInput) };
       orders.push(entry.order);
       if (behavior === "drop-after-commit") return void req.socket.destroy();
+      if (behavior === "drop-mid-body") {
+        const body = JSON.stringify(entry.order);
+        res.writeHead(201, { "content-type": "application/json", "content-length": String(body.length + 100) });
+        res.write(body.slice(0, 5));
+        return void setTimeout(() => req.socket.destroy(), 20);
+      }
       return json(201, entry.order);
     }
 

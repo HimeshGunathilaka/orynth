@@ -15,8 +15,10 @@ const definition = {
 const op = createOrynth({ storage }).define(definition).create({ productId: "123" });
 await assert.rejects(op.run(), OperationUncertainError);
 
-const [restored] = await createOrynth({ storage }).define(definition).restore();
+const orders = createOrynth({ storage }).define(definition);
+const [restored] = await orders.restore();
 assert.equal(restored.idempotencyKey, op.idempotencyKey);
+assert.equal(orders.getOrCreate(op.id, { productId: "123" }), restored);
 assert.deepEqual(await restored.reconcile(), { status: "succeeded", result: "order-1" });
 
 assert.equal(typeof indexedDBStorage, "function");

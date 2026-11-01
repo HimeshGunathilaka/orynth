@@ -70,23 +70,36 @@ A succeeded operation never executes again, whatever the strategy: `run()` retur
 
 ## Double clicks and user intent
 
-Protection works per operation, so a click handler that calls `create()` on every click gets none: each click starts a new operation. Mutation libraries that deduplicate nothing behave the same way. Tie the operation to the user's intent instead, such as a checkout or form ID:
+Protection works per operation, so a click handler that calls `create()` on every click gets none: each click starts a new operation with a new idempotency key. Mutation libraries that deduplicate nothing behave the same way. Tie the operation to the user's intent instead, such as a checkout or form ID, with `getOrCreate()`:
 
 ```ts
 const restored = createOrder.restore(); // at startup
 
 async function placeOrder(checkoutId: string, input: OrderInput) {
   await restored; // an order left over from a reload is found, not created again
-  const operation =
-    createOrder.get(checkoutId) ?? // the order already being placed for this checkout
-    createOrder.create(input, { id: checkoutId, idempotencyKey: checkoutId });
-  return operation.run(); // a second click joins the first
+  return createOrder.getOrCreate(checkoutId, input).run(); // a second click joins the first
 }
 ```
 
-`definition.get(id)` returns the operation the instance is running or tracking under that ID. An ID only protects while its operation is tracked: once the operation resolves and its record is deleted, the ID is free and `create()` with it starts a new operation. That's why the pattern also uses the intent's ID as the **idempotency key**: a click after the order succeeded sends the same key again, so an idempotent backend returns the existing order instead of creating another. When the user really wants a second order, give it a new checkout ID.
+`definition.getOrCreate(id, input)` returns the operation the instance tracks under `id`, or creates one with `id` as both its ID and its idempotency key:
 
-A reused key keeps the expiry of its first use in this instance, so the new operation isn't resent after the backend may have forgotten the key. If the key may have been sent in an earlier session, tell the instance when the backend forgets it, for example from when the checkout started: `create(input, { id, idempotencyKey, expiresAt: checkout.startedAt + KEY_TTL })`. (Right after an operation resolves, `create()` with its ID can briefly throw "already active"; `get()` returns the resolved operation in that window, which is why the pattern calls it first.)
+| The checkout's operation is… | `getOrCreate(checkoutId, input)` | Then `run()` |
+| --- | --- | --- |
+| not tracked | creates it, with `checkoutId` as its key | sends it |
+| in flight: a double click, another component | returns it | joins the request in flight |
+| `uncertain`: a timeout or a lost response | returns it, with the same key | rejects with `OperationUncertainError`: reconcile it |
+| restored after a reload | returns it, with the same key | rejects with `OperationUncertainError`: reconcile it |
+| tracked with different input: the quantity changed | throws `OperationConflictError`, and nothing is sent | |
+| resolved, and its record deleted | creates a new operation with the same key | sends it again; the backend returns the original order |
+
+- **Input** is compared with the input as first sent, the same check `retry()` makes, so editing the submitted form object counts as a change. A new intent needs a new ID. A restored operation whose input wasn't persisted (`persistInput`) has nothing to compare, so it's returned; it can only be reconciled.
+- **A deliberate second purchase** gets a fresh checkout ID. Rotate it once the order is confirmed.
+- **The key** is the ID unless you pass one: `getOrCreate(id, input, { idempotencyKey })`, for example when the backend expects UUIDs. If the tracked operation has another key, `getOrCreate()` throws `OperationConflictError`.
+- **An ID only protects while its operation is tracked.** Once the operation resolves and its record is deleted, the ID is free, and `getOrCreate()` starts a new operation under the same key. From then on the backend's key retention prevents a second order. A reused key keeps the expiry of its first use in this instance, so the new operation isn't resent after the backend may have forgotten it. If the key may have been sent in an earlier session, pass when the backend forgets it: `getOrCreate(id, input, { expiresAt: checkout.startedAt + KEY_TTL })`.
+- **Await `restore()` first.** Before it, an operation stored by an earlier page load isn't tracked yet, so `getOrCreate()` creates a new one. That one is never sent: `run()` finds the stored record and rejects with `OperationConflictError`.
+- **Call `run()` right away**, as a click handler does. An operation is tracked once it starts, so two handles that `getOrCreate()` returns before either runs are separate: the first to run sends, and the other rejects because the ID is already active.
+
+`getOrCreate()` is `get(id) ?? create(input, { id, idempotencyKey: id })` plus the input check. `definition.get(id)` alone looks up the tracked operation without creating one, for example to decide whether a checkout page shows **Place order** or **Check order status**. [Recipes](recipes.md) shows both in an app.
 
 ## TypeScript
 

@@ -95,6 +95,8 @@ export class StorageError extends OrynthError {
  * The stored operation is not what this handle expects: another tab or instance
  * resolved, resubmitted, is sending or already created it. Nothing was sent.
  * Reconcile the operation (or restore it) instead of resubmitting.
+ * `getOrCreate()` also throws it for an ID whose tracked operation has other
+ * input or another idempotency key.
  */
 export class OperationConflictError extends OrynthError {
   static override readonly kind: string = "OperationConflictError";
